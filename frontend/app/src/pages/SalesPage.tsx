@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronRight, Plus, X } from "lucide-react";
@@ -982,8 +981,8 @@ const css = `
 
 .sl-field input:focus,
 .sl-field select:focus {
-  border-color: #16733a;
-  box-shadow: 0 0 0 2px rgba(22, 115, 58, 0.08);
+  border-color: #16a34a;
+  box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.12);
 }
 
 .sl-field input::placeholder {
@@ -994,7 +993,7 @@ const css = `
   cursor: pointer;
 }
 
-/* Add Modal Save Button */
+/* Add Modal Save Button (brighter green) */
 
 .sl-modal-actions {
   display: flex;
@@ -1011,7 +1010,7 @@ const css = `
   border: none;
   border-radius: 9px;
 
-  background: #147333;
+  background: #16a34a;
   color: #ffffff;
 
   font-family: inherit;
@@ -1023,12 +1022,30 @@ const css = `
 }
 
 .sl-save-btn:hover {
-  background: #105e2a;
+  background: #15803d;
 }
 
 .sl-save-btn:active {
-  background: #0d5425;
+  background: #166534;
   color: #ffffff;
+}
+
+/* Higher specificity so global button styles can't override the green */
+.sl-modal .sl-modal-actions button.sl-save-btn {
+  background:#166534 !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 9px;
+  height: 34px;
+  width: 14px;
+}
+
+.sl-modal .sl-modal-actions button.sl-save-btn:hover {
+  background: #15803d !important;
+}
+
+.sl-modal .sl-modal-actions button.sl-save-btn:active {
+  background: #166534 !important;
 }
 
 /* ---------- Opportunity Details ---------- */
@@ -1098,15 +1115,15 @@ const css = `
 }
 
 .sl-notes-section textarea:focus {
-  border-color: #16733a;
-  box-shadow: 0 0 0 2px rgba(22, 115, 58, 0.08);
+  border-color: #16a34a;
+  box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.12);
 }
 
 .sl-notes-section textarea::placeholder {
   color: #9ba49d;
 }
 
-/* ---------- Save Notes Button ---------- */
+/* ---------- Save Notes Button (brighter green) ---------- */
 
 .sl-details-actions {
   display: flex;
@@ -1121,7 +1138,7 @@ const css = `
   border: none;
   border-radius: 9px;
 
-  background: #147333;
+  background: #16a34a;
   color: #ffffff;
 
   font-family: inherit;
@@ -1133,11 +1150,27 @@ const css = `
 }
 
 .sl-save-notes-btn:hover {
-  background: #105e2a;
+  background: #15803d;
 }
 
 .sl-save-notes-btn:active {
-  background: #0d5425;
+  background: #166534;
+}
+
+/* Higher specificity so global button styles can't override the green */
+.sl-details-modal .sl-details-actions button.sl-save-notes-btn {
+  background: #16a34a !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 9px;
+}
+
+.sl-details-modal .sl-details-actions button.sl-save-notes-btn:hover {
+  background: #15803d !important;
+}
+
+.sl-details-modal .sl-details-actions button.sl-save-notes-btn:active {
+  background: #166534 !important;
 }
 
 /* ---------- Mobile Responsive ---------- */
