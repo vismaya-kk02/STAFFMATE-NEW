@@ -1,0 +1,17 @@
+
+services:
+  database:
+    image: postgres:16
+    container_name: staffmate-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: staffmate
+      POSTGRES_USER: staffmate_user
+      POSTGRES_PASSWORD: change_this_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - staffmate_data:/var/lib/postgresql/data
+
+volumes:
+  staffmate_data:

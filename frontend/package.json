@@ -1,0 +1,27 @@
+{
+  "name": "staffmate-frontend",
+  "private": true,
+  "workspaces": [
+    "app",
+    "admin",
+    "crm"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w staffmate-app",
+    "dev:app": "npm run dev -w staffmate-app",
+    "dev:admin": "npm run dev -w staffmate-admin",
+    "dev:crm": "npm run dev -w staffmate-crm",
+    "build": "npm run build -w staffmate-app",
+    "build:app": "npm run build -w staffmate-app",
+    "build:admin": "npm run build -w staffmate-admin",
+    "build:crm": "npm run build -w staffmate-crm",
+    "lint": "npm run lint -w staffmate-app",
+    "lint:all": "npm run lint -w staffmate-app && npm run lint -w staffmate-admin && npm run lint -w staffmate-crm"
+  },
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "dependencies": {
+    "lucide-react": "^1.68.0"
+  }
+}
