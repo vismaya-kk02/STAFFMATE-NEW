@@ -1,4 +1,3 @@
-
 import React, { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -480,7 +479,7 @@ export default function ContactsPage(): React.JSX.Element {
                 onClick={closeModal}
                 aria-label="Close modal"
               >
-                <X size={19} />
+                <X size={18} />
               </button>
             </div>
 
@@ -599,7 +598,7 @@ export default function ContactsPage(): React.JSX.Element {
                 onClick={closeModal}
                 aria-label="Close modal"
               >
-                <X size={19} />
+                <X size={18} />
               </button>
             </div>
 
@@ -689,7 +688,7 @@ export default function ContactsPage(): React.JSX.Element {
                     name="notes"
                     value={form.notes}
                     onChange={handleFormChange}
-                    rows={3}
+                    rows={2}
                   />
                 </div>
 
@@ -887,15 +886,14 @@ const css = `
   background: transparent;
   color: inherit;
   font-family: inherit;
-  font-size: inherit;
+  font-size: 16px;
   font-weight: 600;
   text-align: left;
   cursor: pointer;
 }
 
 .ct-name-button:hover {
-  color: #147333;
-  text-decoration: underline;
+  color: #166534;
 }
 
 /* Important Star */
@@ -931,7 +929,7 @@ const css = `
   align-items: center;
   justify-content: center;
 
-  padding: 20px;
+  padding: 15px;
   box-sizing: border-box;
 
   background: rgba(35, 45, 39, 0.38);
@@ -940,22 +938,22 @@ const css = `
   -webkit-backdrop-filter: blur(5px);
 }
 
-/* Modal Card */
+/* Modal Card (compact) */
 
 .ct-modal {
   width: 100%;
-  max-width: 790px;
+  max-width: 600px;
   max-height: calc(100vh - 40px);
 
   box-sizing: border-box;
   overflow-y: auto;
 
-  padding: 28px 30px;
+  padding: 17px 20px 18px;
 
   background: #fff;
-  border-radius: 19px;
+  border-radius: 14px;
 
-  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.16);
+  box-shadow: 0 12px 35px rgba(0, 0, 0, 0.15);
 }
 
 /* Modal Header */
@@ -964,12 +962,12 @@ const css = `
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 26px;
+  margin-bottom: 14px;
 }
 
 .ct-modal-header h2 {
   margin: 0;
-  font-size: 21px;
+  font-size: 17px;
   font-weight: 650;
   line-height: 1.3;
   color: #202722;
@@ -980,8 +978,8 @@ const css = `
   align-items: center;
   justify-content: center;
 
-  width: 28px;
-  height: 28px;
+  width: 25px;
+  height: 25px;
   padding: 0;
 
   border: none;
@@ -1002,19 +1000,19 @@ const css = `
 .ct-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: 15px;
-  row-gap: 16px;
+  column-gap: 12px;
+  row-gap: 9px;
 }
 
 .ct-field {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  gap: 6px;
+  gap: 4px;
 }
 
 .ct-field label {
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 500;
   color: #606b64;
 }
@@ -1030,16 +1028,16 @@ const css = `
 .ct-field textarea {
   width: 100%;
   box-sizing: border-box;
-  padding: 0 13px;
+  padding: 0 10px;
 
   border: 1px solid #d1d9d1;
-  border-radius: 10px;
+  border-radius: 7px;
 
   background: #fff;
   color: #252b27;
 
   font-family: inherit;
-  font-size: 14px;
+  font-size: 12.5px;
 
   outline: none;
   transition: border-color 0.2s, box-shadow 0.2s;
@@ -1047,21 +1045,21 @@ const css = `
 
 .ct-field input,
 .ct-field select {
-  height: 42px;
+  height: 34px;
 }
 
 .ct-field textarea {
-  min-height: 84px;
-  padding: 10px 13px;
+  min-height: 62px;
+  padding: 8px 10px;
   resize: vertical;
-  line-height: 1.5;
+  line-height: 1.45;
 }
 
 .ct-field input:focus,
 .ct-field select:focus,
 .ct-field textarea:focus {
-  border-color: #16733a;
-  box-shadow: 0 0 0 3px rgba(22, 115, 58, 0.08);
+  border-color: #166534;
+  box-shadow: 0 0 0 2px rgba(22, 101, 52, 0.12);
 }
 
 /* Full Width Fields */
@@ -1075,19 +1073,19 @@ const css = `
 .ct-important-option {
   display: flex;
   align-items: center;
-  gap: 11px;
-  margin-top: 30px;
+  gap: 9px;
+  margin-top: 14px;
 
-  font-size: 14px;
+  font-size: 13px;
   color: #252b27;
   cursor: pointer;
 }
 
 .ct-important-option input {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   margin: 0;
-  accent-color: #147333;
+  accent-color: #166534;
   cursor: pointer;
 }
 
@@ -1096,21 +1094,23 @@ const css = `
 .ct-modal-actions {
   display: flex;
   justify-content: flex-start;
-  margin-top: 16px;
+  margin-top: 12px;
 }
+
+/* Green Save button (Save Contact / Save Changes) */
 
 .ct-save-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
 
-  height: 42px;
+  height: 38px;
   padding: 0 18px;
 
   border: none;
   border-radius: 9px;
 
-  background: #147333;
+  background: #166534;
   color: #fff;
 
   font-family: inherit;
@@ -1122,7 +1122,27 @@ const css = `
 }
 
 .ct-save-btn:hover {
-  background: #105e2a;
+  background: #15803d;
+}
+
+.ct-save-btn:active {
+  background: #14532d;
+}
+
+/* Higher specificity so global button styles can't override the green */
+.ct-modal .ct-modal-actions button.ct-save-btn {
+  background: #166534 !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 9px;
+}
+
+.ct-modal .ct-modal-actions button.ct-save-btn:hover {
+  background: #15803d !important;
+}
+
+.ct-modal .ct-modal-actions button.ct-save-btn:active {
+  background: #14532d !important;
 }
 
 /* Responsive */
@@ -1134,17 +1154,17 @@ const css = `
   }
 
   .ct-modal {
-    padding: 22px 18px;
-    border-radius: 14px;
+    padding: 17px 16px;
+    border-radius: 12px;
   }
 
   .ct-modal-header {
-    margin-bottom: 20px;
+    margin-bottom: 14px;
   }
 
   .ct-form-grid {
     grid-template-columns: 1fr;
-    row-gap: 14px;
+    row-gap: 11px;
   }
 
   .ct-full-width {
@@ -1164,7 +1184,7 @@ const css = `
   .ct-important-option {
     align-items: flex-start;
     line-height: 1.5;
-    margin-top: 22px;
+    margin-top: 14px;
   }
 }
 

@@ -3,8 +3,9 @@ import { Link, useSearchParams } from "react-router-dom";
 import {
   ChevronDown, ChevronRight, Download, Search, SlidersHorizontal, UserPlus, AlignJustify, Menu, X,
   UserX, Pencil, Check, Plus, ArrowRightLeft, CalendarX2, LogIn, FileText, CloudUpload, BadgeCheck,
+  Ban, TrendingUp, ClipboardList,
 } from "lucide-react";
-import AddWorkerPage from "./AddWorkerPage"; // <- adjust the path to where your Add Worker dialog lives
+import AddWorkerPage from "../features/workers/pages/AddWorkerPage"; // <- adjust the path to where your Add Worker dialog lives
 
 /* ---------- Types ---------- */
 type WorkerStatus = "Assigned to a project" | "Available" | "In preparation" | "Terminated" | "Did not start";
@@ -54,7 +55,7 @@ const NAMED: Worker[] = [
   available("SM-1149", "Anh Popa", PETER, { project: "Line 3 Assembly", blocked: true, sp: "No evidence" }),
   available("SM-0754", "Dmytro Kovalenko", PETER, { sp: "Uploaded, awaiting verification" }),
   available("SM-0876", "Elena Popescu", JANA, { accommodation: "Villa Rezidencia Trnava" }),
-  available("SM-0911", "Ivan Petrenko", JANA, { project: "AutoParts Slovakia", blocked: true, sp: "No evidence" }),
+  available("SM-1042", "Ivan Petrenko", JANA, { project: "AutoParts Slovakia", blocked: true, sp: "No evidence", accommodation: "Villa Rezidencia Trnava" }),
   available("SM-0922", "Marko Jovanović", PETER),
   available("SM-0934", "Nikola Ionescu", JANA, { sp: "Uploaded, awaiting verification" }),
   available("SM-0947", "Petar Marković", PETER),
@@ -196,6 +197,10 @@ const DETAIL_OVERRIDES: Record<string, Partial<WorkerDetailInfo>> = {
     verifiedBy: "Marek Máhr, 02 Jun 2021", createdOn: "15 May 2021", createdBy: "Jana Kollárová", assignStart: "05 Jun 2021",
   },
   "SM-0754": { role: "Forklift Operator", nationality: "Ukraine", country: "Ukraine", empStart: "20 Apr 2025" },
+  "SM-1042": {
+    dob: "14 Mar 1991", nationality: "Ukraine", role: "Production Operator", telephone: "+421 900 111 001",
+    country: "Ukraine", empStart: "03 Feb 2025",
+  },
 };
 
 const ROLES = ["Warehouse Associate", "Forklift Operator", "CNC Operator", "Line Assembler", "Packer", "Quality Inspector"];
@@ -219,6 +224,18 @@ const detailFor = (w: Worker): WorkerDetailInfo => {
   };
   return { ...base, ...(DETAIL_OVERRIDES[w.id] ?? {}) };
 };
+
+/* ---------- Pending action (status card on the detail page) ---------- */
+const AS_OF = "2026-09-09"; // same "as of" date as the other pages
+const daysSince = (iso: string) => Math.round((Date.parse(AS_OF) - Date.parse(iso)) / 86400000);
+
+const pendingLabel = (w: Worker): string => (w.status === "Did not start" ? "Did-not-start check" : w.status);
+const pendingHint = (w: Worker): string | null =>
+  w.status === "Available"
+    ? (w.sp !== "Registered" ? "Verify Social Insurance evidence to activate the assignment." : "Assign the worker to a project.")
+    : w.status === "In preparation" ? "Complete the preparation checklist and required documents."
+    : w.status === "Did not start" ? "Complete the did-not-start check."
+    : null;
 
 const SP_TONE: Record<SpState, string> = { Registered: "ok", "No evidence": "bad", "Uploaded, awaiting verification": "warn" };
 
@@ -451,6 +468,10 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
 
   const assignmentStatus = worker.status === "Assigned to a project" ? "Active" : "Planned";
 
+  const hint = pendingHint(worker);
+  const sinceIso = dispToIso(d.empStart);
+  const pendingDays = sinceIso ? daysSince(sinceIso) : null;
+
   return (
     <>
       <nav className="wk-crumb" aria-label="Breadcrumb">
@@ -460,6 +481,13 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
         <ChevronRight size={14} />
         <b>{worker.name}</b>
       </nav>
+
+      {worker.blocked && worker.project && (
+        <div className="wd-blocked" role="alert">
+          <Ban size={16} />
+          <span>Assignment is BLOCKED — SP registration is not verified for the planned start date at {worker.project}.</span>
+        </div>
+      )}
 
       {termNote && (
         <div className="wk-notice" role="status">
@@ -514,6 +542,28 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
             );
           })}
         </div>
+      </section>
+
+      <section className="sm-card wd-status">
+        <h3 className="wd-status-title"><TrendingUp size={16} /> Worker status and pending action</h3>
+        {kv([
+          ["Worker status", (
+            <span key="s">
+              <WPill tone={STATUS_PILL[worker.status]}>{worker.status}</WPill>
+              <span className="wd-status-note">calculated from dated records</span>
+            </span>
+          )],
+          ["Employment start", d.empStart],
+        ])}
+        {hint && (
+          <div className="wd-pending">
+            <ClipboardList size={16} />
+            <span>
+              <b>Pending action: {pendingLabel(worker)}</b> — {hint}
+              {pendingDays !== null ? ` Since ${d.empStart} · ${pendingDays} days.` : ""}
+            </span>
+          </div>
+        )}
       </section>
 
       <div className="wd-tabs" role="tablist">
@@ -738,8 +788,10 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
 /* ---------- Page ---------- */
 export default function WorkersPage(): React.JSX.Element {
   // open on the tab named in the URL, e.g. /admin/workers?tab=avail
-  const [searchParams] = useSearchParams();
+  // open a worker profile named in the URL, e.g. /admin/workers?worker=Ivan%20Petrenko (name or ID)
+  const [searchParams, setSearchParams] = useSearchParams();
   const urlTab = searchParams.get("tab");
+  const urlWorker = searchParams.get("worker");
   const [tabKey, setTabKey] = useState(tabFromUrl(urlTab));
 
   // if the URL tab changes while the page is already open, follow it
@@ -752,7 +804,19 @@ export default function WorkersPage(): React.JSX.Element {
   const [page, setPage] = useState(1);
   const [compact, setCompact] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [openId, setOpenId] = useState<string | null>(null);
+  // Opens straight on the worker named in ?worker= (so Documents -> worker profile works)
+  const [openId, setOpenId] = useState<string | null>(
+    () => INITIAL_WORKERS.find((w) => w.id === urlWorker || w.name === urlWorker)?.id ?? null,
+  );
+
+  // if ?worker= changes while the page is already open, follow it
+  useEffect(() => {
+    if (!urlWorker) return;
+    const w = workers.find((x) => x.id === urlWorker || x.name === urlWorker);
+    if (w) setOpenId(w.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlWorker]);
+
   // Profile fields edited through the Edit Profile dialog (kept per worker ID)
   const [extras, setExtras] = useState<Record<string, Partial<WorkerDetailInfo>>>({});
   // Filters panel
@@ -812,7 +876,15 @@ export default function WorkersPage(): React.JSX.Element {
         <WorkerDetail
           worker={openWorker}
           extra={extras[openWorker.id]}
-          onBack={() => setOpenId(null)}
+          onBack={() => {
+            setOpenId(null);
+            // clear ?worker= so the Workers breadcrumb returns to the normal list
+            if (urlWorker) {
+              const next = new URLSearchParams(searchParams);
+              next.delete("worker");
+              setSearchParams(next, { replace: true });
+            }
+          }}
           onSave={(patch, ex) => saveProfile(openWorker.id, patch, ex)}
         />
       </>
@@ -1226,6 +1298,17 @@ const css = `
 .wd-event{padding:4px}
 .wd-event strong{font-size:14px}
 .wd-event span{font-size:13px}
+
+/* ---- Blocked banner + status / pending action card ---- */
+.wd-blocked{display:flex;align-items:center;gap:10px;padding:9px 14px;margin-bottom:12px;border-radius:10px;background:#fadadb;color:#8a1c14;font-size:13.5px;font-weight:500}
+.wd-blocked svg{flex:none}
+.wd-status{padding:14px 18px 16px;margin-bottom:10px}
+.wd-status-title{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:14px;font-weight:600;color:var(--text)}
+.wd-status .wd-kv{grid-template-columns:190px 1fr;align-items:center}
+.wd-status-note{margin-left:8px;color:var(--muted)}
+.wd-pending{display:flex;align-items:center;gap:10px;margin-top:12px;padding:9px 14px;border-radius:8px;background:#fcebc4;color:#5c4000;font-size:13px;line-height:1.4}
+.wd-pending svg{flex:none}
+.wd-pending b{font-weight:600}
 
 /* ---- Begin termination dialog ---- */
 .tm-overlay{position:fixed;inset:0;z-index:200;display:grid;place-items:center;padding:20px;background:rgba(20,24,22,.32);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}

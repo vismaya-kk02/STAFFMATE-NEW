@@ -1,11 +1,11 @@
 import React from "react";
 import { Outlet } from "react-router-dom";
-import Sidebar from "./Sidebar";
-import TopBar from "./Topbar";
+import Sidebar from "../portals/admin/crm/components/Sidebar";
+import TopBar from "../portals/admin/crm/components/Topbar";
 
 // Keeps `import AdminWorkspace, { OverviewContent } from '../pages/AdminWorkspace'`
 // in AppRoutes.tsx working even though the home page now lives in OverviewPage.tsx.
-export { OverviewContent } from "./OverviewPage";
+export { OverviewContent } from "../portals/admin/crm/pages/OverviewPage";
 
 const Footer: React.FC = () => (
   <footer className="sm-footer">
@@ -162,4 +162,79 @@ const css = `
   .sm-stat:nth-child(n+3){border-top:1px solid var(--line)}
   .sm-version{display:none}
 }
+
+
+/* Application-wide dark theme */
+html[data-theme="dark"] .sm-app {
+  --green: #79c995;
+  --green-soft: #263d2d;
+  --bg: #121713;
+  --card: #1c241e;
+  --line: #354239;
+  --text: #edf2ee;
+  --muted: #b2bdb5;
+  --danger: #ff8585;
+  --danger-bg: #482727;
+}
+
+/* Sidebar, topbar and footer */
+html[data-theme="dark"] .sm-app .sm-footer,
+html[data-theme="dark"] .sm-app .sm-sidebar,
+html[data-theme="dark"] .sm-app .sm-topbar {
+  background: var(--card) !important;
+  color: var(--text);
+}
+
+/* Cards and notification panels */
+html[data-theme="dark"] .sm-app .sm-card,
+html[data-theme="dark"] .sm-app .nb-panel {
+  background: var(--card) !important;
+  color: var(--text);
+  border-color: var(--line);
+}
+
+/* Form elements */
+html[data-theme="dark"] .sm-app input,
+html[data-theme="dark"] .sm-app select,
+html[data-theme="dark"] .sm-app textarea {
+  background-color: #202a23;
+  color: var(--text);
+  border-color: var(--line);
+}
+
+/* Buttons and version label */
+html[data-theme="dark"] .sm-app .sm-btn-outline,
+html[data-theme="dark"] .sm-app .sm-version {
+  background: #202a23 !important;
+  color: var(--text);
+  border-color: var(--line) !important;
+}
+
+/* Borders and tables */
+html[data-theme="dark"] .sm-app .sm-stat,
+html[data-theme="dark"] .sm-app .sm-queue-row,
+html[data-theme="dark"] .sm-app .sm-footer,
+html[data-theme="dark"] .sm-app .sm-table th,
+html[data-theme="dark"] .sm-app .sm-table td {
+  border-color: var(--line);
+}
+
+html[data-theme="dark"] .sm-app .sm-table th {
+  background: #202a23;
+  color: var(--muted);
+}
+
+html[data-theme="dark"] .sm-app .sm-table tr:hover {
+  background: #202a23;
+}
+
+/* Topbar controls */
+html[data-theme="dark"] .sm-app .sm-icon-btn:hover,
+html[data-theme="dark"] .sm-app .nb-btn:hover,
+html[data-theme="dark"] .sm-app .nb-btn.is-open,
+html[data-theme="dark"] .sm-app .nb-item:hover {
+  background: #2b382f;
+  color: var(--text);
+}
+
 `;

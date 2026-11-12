@@ -1,14 +1,14 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import AdminWorkspace, { OverviewContent } from '../pages/AdminWorkspace'
-import AddWorkerPage from '../pages/AddWorkerPage'
-import ProjectsPage from '../pages/ProjectsPage'
-import WorkersPage from '../pages/WorkersPage'
-import AccommodationPage from '../pages/AccommodationPage'
-import TasksPage from '../pages/TasksPage'
-import DocumentsPage from '../pages/DocumentsPage'
-import ContactsPage from '../pages/ContactsPage'
-import SalesPage from '../pages/SalesPage'
-import SettingsPage from "../pages/SettingsPage";
+import AddWorkerPage from '../features/workers/pages/AddWorkerPage'
+import ProjectsPage from '../features/projects/pages/ProjectsPage'
+import WorkerDetailsPage from '../features/workers/pages/WorkerDetailsPage'
+import AccommodationPage from '../features/accommodation/pages/AccommodationPage'
+import TasksPage from '../features/tasks/pages/TasksPage'
+import DocumentsPage from '../features/documents/pages/DocumentsPage'
+import ContactsPage from '../features/contacts/pages/ContactsPage'
+import SalesPage from '../features/sales/pages/SalesPage'
+import SettingsPage from "../features/settings/pages/SettingsPage";
 import { GuestRoute, RequireAdmin, RequirePermission } from './guards'
 import {
   AcceptInvitationRoute,
@@ -39,7 +39,7 @@ export function AppRoutes() {
 
           {/* Projects page */}
           <Route path="projects" element={<ProjectsPage />} />
-          <Route path="workers" element={<WorkersPage />} />
+          <Route path="workers" element={<WorkerDetailsPage />} />
           <Route path="accommodation" element={<AccommodationPage />} />
           <Route path="tasks" element={<TasksPage />} />
           <Route path="documents" element={<DocumentsPage />} />

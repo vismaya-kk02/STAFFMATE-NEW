@@ -1,11 +1,13 @@
 import React, { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ChevronRight, Search, SlidersHorizontal } from "lucide-react";
+import { ChevronDown, ChevronRight, Search, SlidersHorizontal } from "lucide-react";
 
 /* ---------- Types ---------- */
 type DocStatus = "Verified" | "Missing" | "Held — Not Uploaded" | "Pending Verification" | "Expired";
+type RecordType = "Worker" | "Project" | "Facility";
 
 interface DocItem {
+  recordType: RecordType;
   profile: string;
   category: string;
   file: string | null;
@@ -31,6 +33,7 @@ const PETER = "Peter Vrábel";
 type Spec = [status: DocStatus, validUntil?: string | null, by?: string | null, date?: string | null, file?: string | null];
 const build = (profile: string, specs: Spec[]): DocItem[] =>
   specs.map(([status, validUntil = null, by = null, date = null, file], i) => ({
+    recordType: "Worker" as RecordType,
     profile, category: CATEGORIES[i], status, validUntil, uploadedBy: by, uploadDate: date,
     file: file === undefined ? (status === "Missing" || status === "Held — Not Uploaded" ? null : FILES[i]) : file,
     responsible: "Marek Máhr",
@@ -81,17 +84,43 @@ const PILL: Record<DocStatus, string> = {
   Verified: "ok", Missing: "bad", Expired: "bad", "Pending Verification": "warn", "Held — Not Uploaded": "warn",
 };
 
+/* ---------- Filter options ---------- */
+const RECORD_TYPES: RecordType[] = ["Worker", "Project", "Facility"];
+const EXPIRY_OPTIONS: { label: string; days: number }[] = [
+  { label: "30 days", days: 30 },
+  { label: "60 days", days: 60 },
+  { label: "90 days", days: 90 },
+  { label: "180 days", days: 180 },
+];
+const COORDINATORS = Array.from(new Set(DOCS.map((d) => d.uploadedBy).filter(Boolean) as string[]));
+
 /* ---------- Page ---------- */
 export default function DocumentsPage(): React.JSX.Element {
   const [tab, setTab] = useState("All");
   const [query, setQuery] = useState("");
+  const [showFilters, setShowFilters] = useState(false);
+  const [fType, setFType] = useState("Any");
+  const [fCategory, setFCategory] = useState("Any");
+  const [fCoordinator, setFCoordinator] = useState("Any");
+  const [fExpiry, setFExpiry] = useState("Any");
+
+  const filtersActive = [fType, fCategory, fCoordinator, fExpiry].some((v) => v !== "Any");
 
   const rows = useMemo(() => {
     const t = TABS.find((x) => x.label === tab)!;
     const q = query.trim().toLowerCase();
-    return DOCS.filter(t.match).filter((d) =>
-      !q || [d.profile, d.category, d.file ?? "", d.uploadedBy ?? ""].some((v) => v.toLowerCase().includes(q)));
-  }, [tab, query]);
+    const expiryDays = EXPIRY_OPTIONS.find((o) => o.label === fExpiry)?.days;
+    return DOCS.filter(t.match)
+      .filter((d) => !q || [d.profile, d.category, d.file ?? "", d.uploadedBy ?? ""].some((v) => v.toLowerCase().includes(q)))
+      .filter((d) => fType === "Any" || d.recordType === fType)
+      .filter((d) => fCategory === "Any" || d.category === fCategory)
+      .filter((d) => fCoordinator === "Any" || d.uploadedBy === fCoordinator)
+      .filter((d) => {
+        if (expiryDays === undefined) return true;
+        const n = daysRemaining(d);
+        return n !== null && n <= expiryDays;
+      });
+  }, [tab, query, fType, fCategory, fCoordinator, fExpiry]);
 
   const count = (label: string) => DOCS.filter(TABS.find((x) => x.label === label)!.match).length;
   const stats = [
@@ -99,6 +128,13 @@ export default function DocumentsPage(): React.JSX.Element {
     { label: "Held — Not Uploaded", value: count("Held — Not Uploaded"), color: "#8a5a00" },
     { label: "Pending Verification", value: count("Pending Verification"), color: "#8a5a00" },
     { label: "Expiring Soon", value: count("Expiring Soon"), color: "#8a5a00" },
+  ];
+
+  const filterFields: [string, string, (v: string) => void, string[]][] = [
+    ["Record Type", fType, setFType, RECORD_TYPES],
+    ["Category", fCategory, setFCategory, CATEGORIES],
+    ["Coordinator", fCoordinator, setFCoordinator, COORDINATORS],
+    ["Expiry Within", fExpiry, setFExpiry, EXPIRY_OPTIONS.map((o) => o.label)],
   ];
 
   return (
@@ -139,8 +175,36 @@ export default function DocumentsPage(): React.JSX.Element {
             <Search size={16} />
             <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter items" />
           </label>
-          <button className="sm-btn sm-btn-outline"><SlidersHorizontal size={16} /> Filters</button>
+          <button
+            type="button"
+            className={`sm-btn sm-btn-outline${showFilters || filtersActive ? " dc-btn-on" : ""}`}
+            aria-expanded={showFilters}
+            onClick={() => setShowFilters((v) => !v)}
+          >
+            <SlidersHorizontal size={16} /> Filters
+          </button>
         </div>
+
+        {showFilters && (
+          <div className="dc-filters">
+            <div className="dc-filters-grid">
+              {filterFields.map(([label, value, setValue, options]) => (
+                <label className="dc-field" key={label}>
+                  <span>{label}</span>
+                  <div className="dc-select">
+                    <select value={value} onChange={(e) => setValue(e.target.value)}>
+                      <option value="Any">Any</option>
+                      {options.map((o) => (
+                        <option key={o} value={o}>{o}</option>
+                      ))}
+                    </select>
+                    <ChevronDown size={18} />
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="sm-table-wrap">
           <table className="sm-table dc-table">
@@ -155,7 +219,15 @@ export default function DocumentsPage(): React.JSX.Element {
                 const left = daysRemaining(d);
                 return (
                   <tr key={`${d.profile}-${d.category}`}>
-                    <td><a href="#" className="dc-profile">{d.profile}</a></td>
+                    <td>
+                      {/* Opens the Workers page directly on this worker's profile */}
+                      <Link
+                        to={`/admin/workers?worker=${encodeURIComponent(d.profile)}`}
+                        className="dc-profile"
+                      >
+                        {d.profile}
+                      </Link>
+                    </td>
                     <td>{d.category}</td>
                     <td>{d.file ?? "— (not uploaded)"}</td>
                     <td><span className={`sm-pill ${PILL[d.status]}`}>{d.status}</span></td>
@@ -195,7 +267,7 @@ const css = `
 .dc-table th,.dc-table td{white-space:nowrap;padding-left:18px}
 .dc-table td{padding-top:12px;padding-bottom:12px}
 .dc-profile{font-weight:600}
-.dc-profile:hover{color:var(--green)}
+.dc-profile:hover{color:var(--green);}
 .dc-table tbody tr:hover{background:#faf9f6}
 .dc-none{padding:34px 18px!important;color:var(--muted)}
 
@@ -217,4 +289,17 @@ const css = `
 .dc-table td{padding-top:8px;padding-bottom:8px}
 .dc-table .sm-pill{font-size:12.5px;padding:2px 10px}
 .dc-none{padding:22px 18px!important;font-size:13.5px}
+
+/* ---- Filters panel ---- */
+.dc-btn-on{background:#f1f0eb !important}
+.dc-filters{margin:4px 16px 12px;padding:12px 14px 14px;border:1px solid var(--line);border-radius:10px;background:#faf9f6}
+.dc-filters-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px 14px}
+.dc-field{display:flex;flex-direction:column;gap:5px}
+.dc-field>span{color:#4a4a45;font-weight:500;font-size:12.5px}
+.dc-select{position:relative;height:36px}
+.dc-select select{width:100%;height:36px;padding:0 34px 0 12px;border:1px solid var(--line);border-radius:7px;background:#fff;font:inherit;font-size:13.5px;color:var(--text);outline:none;box-sizing:border-box;appearance:none;-webkit-appearance:none;cursor:pointer}
+.dc-select select:focus{border-color:#166534;box-shadow:0 0 0 3px rgba(22,101,52,.15)}
+.dc-select svg{position:absolute;right:11px;top:50%;transform:translateY(-50%);pointer-events:none;color:var(--text)}
+@media (max-width:900px){.dc-filters-grid{grid-template-columns:1fr 1fr}}
+@media (max-width:560px){.dc-filters-grid{grid-template-columns:1fr}}
 `;

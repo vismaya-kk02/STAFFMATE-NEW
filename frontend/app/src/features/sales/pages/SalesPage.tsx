@@ -650,7 +650,7 @@ export default function SalesPage(): React.JSX.Element {
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder="Add notes about this opportunity..."
-                rows={3}
+                rows={2}
               />
             </div>
 
@@ -835,18 +835,18 @@ const css = `
 
 .sl-details-modal {
   width: 100%;
-  max-width: 790px;
+  max-width: 600px;
   max-height: calc(100vh - 50px);
 
   box-sizing: border-box;
   overflow-y: auto;
 
   background: #ffffff;
-  border-radius: 18px;
+  border-radius: 14px;
 
-  padding: 28px 30px 27px;
+  padding: 20px 22px 20px;
 
-  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.16);
+  box-shadow: 0 12px 35px rgba(0, 0, 0, 0.15);
 
   animation: sl-modal-appear 0.2s ease-out;
 }
@@ -886,12 +886,12 @@ const css = `
   align-items: center;
   justify-content: space-between;
   gap: 15px;
-  margin-bottom: 25px;
+  margin-bottom: 16px;
 }
 
 .sl-details-header h2 {
   margin: 0;
-  font-size: 21px;
+  font-size: 17px;
   line-height: 1.35;
   font-weight: 650;
   color: #202722;
@@ -981,7 +981,7 @@ const css = `
 
 .sl-field input:focus,
 .sl-field select:focus {
-  border-color: #16a34a;
+  border-color: #166534;
   box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.12);
 }
 
@@ -1010,7 +1010,7 @@ const css = `
   border: none;
   border-radius: 9px;
 
-  background: #16a34a;
+  background: #166534;
   color: #ffffff;
 
   font-family: inherit;
@@ -1032,12 +1032,11 @@ const css = `
 
 /* Higher specificity so global button styles can't override the green */
 .sl-modal .sl-modal-actions button.sl-save-btn {
-  background:#166534 !important;
+  background: #166534 !important;
   color: #ffffff !important;
   border: none !important;
   border-radius: 9px;
   height: 34px;
-  width: 14px;
 }
 
 .sl-modal .sl-modal-actions button.sl-save-btn:hover {
@@ -1053,25 +1052,25 @@ const css = `
 .sl-details-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
 }
 
 .sl-details-row {
   display: grid;
-  grid-template-columns: 200px minmax(0, 1fr);
+  grid-template-columns: 150px minmax(0, 1fr);
   align-items: center;
-  min-height: 22px;
-  gap: 16px;
+  min-height: 18px;
+  gap: 12px;
 }
 
 .sl-details-row span {
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 400;
   color: #606b64;
 }
 
 .sl-details-row strong {
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 400;
   color: #252b27;
 }
@@ -1081,32 +1080,32 @@ const css = `
 .sl-notes-section {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  margin-top: 17px;
+  gap: 6px;
+  margin-top: 12px;
 }
 
 .sl-notes-section label {
-  font-size: 14px;
+  font-size: 12.5px;
   font-weight: 500;
   color: #606b64;
 }
 
 .sl-notes-section textarea {
   width: 100%;
-  min-height: 84px;
+  min-height: 62px;
   box-sizing: border-box;
 
-  padding: 11px 13px;
+  padding: 8px 11px;
 
   border: 1px solid #d1d9d1;
-  border-radius: 10px;
+  border-radius: 8px;
 
   background: #ffffff;
   color: #252b27;
 
   font-family: inherit;
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: 13px;
+  line-height: 1.45;
 
   resize: vertical;
   outline: none;
@@ -1128,21 +1127,21 @@ const css = `
 .sl-details-actions {
   display: flex;
   justify-content: flex-start;
-  margin-top: 17px;
+  margin-top: 12px;
 }
 
 .sl-save-notes-btn {
-  height: 37px;
-  padding: 0 16px;
+  height: 32px;
+  padding: 0 14px;
 
   border: none;
   border-radius: 9px;
 
-  background: #16a34a;
+  background: #166534;
   color: #ffffff;
 
   font-family: inherit;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
 
   cursor: pointer;
@@ -1159,7 +1158,7 @@ const css = `
 
 /* Higher specificity so global button styles can't override the green */
 .sl-details-modal .sl-details-actions button.sl-save-notes-btn {
-  background: #16a34a !important;
+  background: #166534 !important;
   color: #ffffff !important;
   border: none !important;
   border-radius: 9px;
@@ -1185,16 +1184,16 @@ const css = `
 
   .sl-details-modal {
     max-width: 100%;
-    padding: 20px 17px;
-    border-radius: 14px;
+    padding: 18px 16px;
+    border-radius: 12px;
   }
 
   .sl-details-header {
-    margin-bottom: 20px;
+    margin-bottom: 14px;
   }
 
   .sl-details-header h2 {
-    font-size: 17px;
+    font-size: 16px;
   }
 
   .sl-details-row {

@@ -1,12 +1,14 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAppTheme } from "../../../../theme/ThemeContext";
 import {
-  Search, Moon, Bell, LogOut, Clock, BadgeCheck, ClipboardCheck, FileText,
-  CalendarClock, BedDouble,
+  Search, Moon, Sun, Bell, LogOut, Clock, BadgeCheck,
+  ClipboardCheck, FileText, CalendarClock, BedDouble,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useAuth } from "../auth/useAuth";
-import { paths } from "../routing/paths";
+import { useAuth } from "../../../../auth/useAuth";
+
+import { paths } from "../../../../routing/paths";
 
 /* ---------- Types ---------- */
 type NotifTone = "danger" | "warn";
@@ -116,6 +118,7 @@ export default function TopBar(): React.JSX.Element {
   const navigate = useNavigate();
   // NOTE: confirm the logout function's real name in src/auth/useAuth (logout / signOut / ...)
   const { logout } = useAuth();
+  const { mode, toggleMode } = useAppTheme();
 
   const handleLogout = async () => {
     try {
@@ -136,9 +139,20 @@ export default function TopBar(): React.JSX.Element {
       </label>
 
       <div className="sm-topbar-actions">
-        <button type="button" className="sm-icon-btn" aria-label="Toggle dark mode">
-          <Moon size={18} strokeWidth={1.6} />
-        </button>
+        <button
+  type="button"
+  className="sm-icon-btn"
+  aria-label={`Switch to ${mode === "light" ? "dark" : "light"} mode`}
+  aria-pressed={mode === "dark"}
+  title={`Switch to ${mode === "light" ? "dark" : "light"} mode`}
+  onClick={toggleMode}
+>
+  {mode === "light" ? (
+    <Moon size={18} strokeWidth={1.6} />
+  ) : (
+    <Sun size={18} strokeWidth={1.6} />
+  )}
+</button>
         <NotificationBell />
         <div className="sm-avatar">MM</div>
         <button type="button" className="sm-icon-btn" aria-label="Log out" onClick={handleLogout}>
