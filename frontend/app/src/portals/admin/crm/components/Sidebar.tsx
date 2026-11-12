@@ -2,15 +2,14 @@ import React from "react";
 import { NavLink as RouterLink } from "react-router-dom";
 
 /* ---------- Types ---------- */
-interface NavItem {
+export interface NavItem {
   label: string;
   icon: React.ReactNode;
   badge?: number;
   to?: string;
 }
-
 /* ---------- Data ---------- */
-const mainNav: NavItem[] = [
+export const mainNav: NavItem[] = [
   {
     label: "Overview",
     icon: <img src="/images/overview.svg" alt="Overview" width={16} height={16} />,
@@ -49,7 +48,7 @@ const mainNav: NavItem[] = [
   },
 ];
 
-const secondaryNav: NavItem[] = [
+export const secondaryNav: NavItem[] = [
   {
     label: "Sales",
     icon: <img src="/images/sales.svg" alt="Sales" width={20} height={20} />,

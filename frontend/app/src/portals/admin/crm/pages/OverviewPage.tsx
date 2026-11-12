@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import {
   Factory, Building2, CircleCheck, CalendarDays, UserPlus, Inbox, ChevronRight,
   Clock, ClipboardCheck, TriangleAlert, Ban, FileWarning, Megaphone,
-  CalendarClock, BookOpen, ListChecks, X,
+  CalendarClock, BookOpen, ListChecks,
 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import AddWorkerPage from "../../../../features/workers/pages/AddWorkerPage";
@@ -36,6 +36,7 @@ interface AlertItem {
 }
 
 interface Announcement {
+  id: number;
   title: string;
   author: string;
   published: string;
@@ -83,6 +84,27 @@ const DAILY_DATE = "2026-08-20"; // yyyy-mm-dd
 const DAILY_STATUS_LINK =
   `/admin/projects?tab=daily&project=${encodeURIComponent(DAILY_PROJECT)}&date=${DAILY_DATE}`;
 
+/** Opens the Projects page directly on one project's detail page (General tab). */
+const projectDetailLink = (name: string) => `/admin/projects?detail=${encodeURIComponent(name)}`;
+
+/**
+ * Opens the Workers page directly on one worker's profile.
+ * WorkersPage reads ?worker=<id or name> from the URL.
+ */
+const workerLink = (id: string) => `/admin/workers?worker=${encodeURIComponent(id)}`;
+
+/**
+ * Opens the Accommodation page directly on one facility's detail page.
+ * AccommodationPage reads ?facility=<facility name> from the URL.
+ */
+const facilityLink = (name: string) => `/admin/accommodation?facility=${encodeURIComponent(name)}`;
+
+/**
+ * Opens Tasks & Announcements on the Company Announcements tab with one announcement's details open.
+ * TasksPage reads ?tab=announcements&announcement=<id> from the URL.
+ */
+const announcementLink = (id: number) => `/admin/tasks?tab=announcements&announcement=${id}`;
+
 /* ---------- Data ---------- */
 const topStats: Stat[] = [
   { title: "Assigned to a project", value: 41, caption: "Active assignments today", to: "/admin/workers?tab=assigned" },
@@ -121,15 +143,14 @@ const projects = [
 ];
 
 /**
- * Review links. Ivan Petrenko uses his worker ID (SM-1042) as shown on his profile page.
- * The other worker IDs below are placeholders: replace them with the real worker IDs/slugs
- * that your /admin/workers/:id route expects.
+ * Review links open the worker's profile on the Workers page (?worker=<id>).
+ * IDs match the data in WorkersPage: Ivan Petrenko SM-1042, Marko Jovanović SM-0922, Anh Popa SM-1149.
  */
 const alerts: AlertItem[] = [
-  { icon: <Ban size={18} />, who: "Ivan Petrenko", text: "— Blocked: SP not verified for 03 Feb 2025 start (AutoParts Slovakia)", warn: false, to: "/admin/workers/SM-1042" },
-  { icon: <FileWarning size={18} />, who: "Marko Jovanović", text: "— TRC / Residence Card expired 3 days ago", warn: false, to: "/admin/workers/marko-jovanovic" },
-  { icon: <Ban size={18} />, who: "Anh Popa", text: "— Blocked: SP not verified for 07 Sep 2026 start (Line 3 Assembly)", warn: false, to: "/admin/workers/anh-popa" },
-  { icon: <ListChecks size={18} />, who: "1", text: "worker(s) have daily records to review after later Social Insurance verification", warn: true, to: "/admin/workers?tab=pending" },
+  { icon: <Ban size={18} />, who: "Ivan Petrenko", text: "— Blocked: SP not verified for 03 Feb 2025 start (AutoParts Slovakia)", warn: false, to: workerLink("SM-1042") },
+  { icon: <FileWarning size={18} />, who: "Marko Jovanović", text: "— TRC / Residence Card expired 3 days ago", warn: false, to: workerLink("SM-0922") },
+  { icon: <Ban size={18} />, who: "Anh Popa", text: "— Blocked: SP not verified for 07 Sep 2026 start (Line 3 Assembly)", warn: false, to: workerLink("SM-1149") },
+  { icon: <ListChecks size={18} />, who: "1", text: "worker(s) have daily records to review after later Social Insurance verification", warn: true, to: DAILY_STATUS_LINK },
 ];
 
 const beds = [
@@ -142,9 +163,10 @@ const tasks = [
   { title: "Confirm TRC renewal — Marko Jovanović", meta: "Due 10 Sep 2026 · Medium priority" },
 ];
 
-/** Company announcements. Clicking one opens the detail popup. */
+/** Company announcements. Clicking one opens it on the Tasks & Announcements page. */
 const announcements: Announcement[] = [
   {
+    id: 1,
     title: "September salary payment date: 27 Sep",
     author: "Marek Máhr",
     published: "01 Sep 2026",
@@ -271,7 +293,9 @@ const DailyStatus: React.FC = () => {
             <small>11 workers on the list for 08 Sep 2026</small>
           </div>
           <div className="sm-row-right">
-            <span className={`sm-pill ${d.ok ? "ok" : "bad"}`}>{d.state}</span>
+            <span className={`sm-pill sm-daily-status ${d.ok ? "ok" : "bad"}`}>
+              {d.state}
+            </span>
             {!d.ok && (
               <button
                 type="button"
@@ -293,29 +317,41 @@ const DailyStatus: React.FC = () => {
   );
 };
 
-const ProjectsTable: React.FC = () => (
-  <section className="sm-card sm-pad">
-    <CardHead icon={<Factory size={16} strokeWidth={1.6} />} title="Projects & Assignments" link="View all" to="/admin/projects" />
-    <div className="sm-table-wrap">
-      <table className="sm-table">
-        <thead>
-          <tr><th>Project / Factory</th><th>Location</th><th>Coordinator</th><th>Assigned</th><th>Additional</th></tr>
-        </thead>
-        <tbody>
-          {projects.map((p) => (
-            <tr key={p.name}>
-              <td><strong>{p.name}</strong><small>{p.client}</small></td>
-              <td>{p.location}</td>
-              <td>{p.coordinator}</td>
-              <td>{p.assigned}</td>
-              <td>{p.additional}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  </section>
-);
+const ProjectsTable: React.FC = () => {
+  const go = useGo();
+  return (
+    <section className="sm-card sm-pad">
+      <CardHead icon={<Factory size={16} strokeWidth={1.6} />} title="Projects & Assignments" link="View all" to="/admin/projects" />
+      <div className="sm-table-wrap">
+        <table className="sm-table">
+          <thead>
+            <tr><th>Project / Factory</th><th>Location</th><th>Coordinator</th><th>Assigned</th><th>Additional</th></tr>
+          </thead>
+          <tbody>
+            {projects.map((p) => (
+              <tr key={p.name}>
+                <td>
+                  <button
+                    type="button"
+                    className="sm-proj-link"
+                    onClick={(e) => go(projectDetailLink(p.name), e.currentTarget)}
+                  >
+                    <strong>{p.name}</strong>
+                  </button>
+                  <small>{p.client}</small>
+                </td>
+                <td>{p.location}</td>
+                <td>{p.coordinator}</td>
+                <td>{p.assigned}</td>
+                <td>{p.additional}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+};
 
 const CriticalAlerts: React.FC = () => {
   const go = useGo();
@@ -342,22 +378,30 @@ const CriticalAlerts: React.FC = () => {
   );
 };
 
-const AccommodationCard: React.FC = () => (
-  <section className="sm-card sm-pad">
-    <CardHead icon={<Building2 size={16} strokeWidth={1.6} />} title="Accommodation" link="View all" to="/admin/accommodation" />
-    <dl className="sm-kv">
-      <dt>Contracted</dt><dd>222 beds</dd>
-      <dt>Occupied</dt><dd>4 beds</dd>
-      <dt>Available</dt><dd className="good">218 beds</dd>
-    </dl>
-    {beds.map((b) => (
-      <div key={b.name} className="sm-row">
-        <div><strong>{b.name}</strong><small>{b.detail}</small></div>
-        <span className="sm-pill ok">{b.pct}</span>
-      </div>
-    ))}
-  </section>
-);
+const AccommodationCard: React.FC = () => {
+  const go = useGo();
+  return (
+    <section className="sm-card sm-pad">
+      <CardHead icon={<Building2 size={16} strokeWidth={1.6} />} title="Accommodation" link="View all" to="/admin/accommodation" />
+      <dl className="sm-kv">
+        <dt>Contracted</dt><dd>222 beds</dd>
+        <dt>Occupied</dt><dd>4 beds</dd>
+        <dt>Available</dt><dd className="good">218 beds</dd>
+      </dl>
+      {beds.map((b) => (
+        <button
+          key={b.name}
+          type="button"
+          className="sm-row sm-row-btn"
+          onClick={(e) => go(facilityLink(b.name), e.currentTarget)}
+        >
+          <div><strong>{b.name}</strong><small>{b.detail}</small></div>
+          <span className="sm-pill ok">{b.pct}</span>
+        </button>
+      ))}
+    </section>
+  );
+};
 
 const TasksCard: React.FC = () => (
   <section className="sm-card sm-pad">
@@ -365,70 +409,31 @@ const TasksCard: React.FC = () => (
     {tasks.map((t) => (
       <div key={t.title} className="sm-row">
         <div><strong>{t.title}</strong><small>{t.meta}</small></div>
-        <span className="sm-pill warn">Due soon</span>
+        <span className="sm-pill warn sm-task-due-pill">Due soon</span>
       </div>
     ))}
   </section>
 );
 
-const AnnouncementsCard: React.FC<{ onOpen: (a: Announcement) => void }> = ({ onOpen }) => (
-  <section className="sm-card sm-pad">
-    <CardHead icon={<Megaphone size={16} strokeWidth={1.6} />} title="Company Announcements" />
-    {announcements.map((a) => (
-      <button key={a.title} type="button" className="sm-row sm-row-btn" onClick={() => onOpen(a)}>
-        <div>
-          <strong>{a.pinned ? "📌 " : ""}{a.title}</strong>
-          <small>{a.audience}{a.pinned ? " · Pinned" : ""}</small>
-        </div>
-      </button>
-    ))}
-  </section>
-);
-
-/** Popup showing one announcement: title, details and the message. */
-const AnnouncementModal: React.FC<{ item: Announcement; onClose: () => void }> = ({ item, onClose }) => {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  const rows: [string, string][] = [
-    ["Author", item.author],
-    ["Published", item.published],
-    ["Valid Until", item.validUntil],
-    ["Audience", item.audience],
-    ["Pinned", item.pinned ? "Yes" : "No"],
-  ];
-
+const AnnouncementsCard: React.FC = () => {
+  const go = useGo();
   return (
-    <div className="sm-ann-overlay" onMouseDown={onClose}>
-      <div
-        className="sm-ann-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="sm-ann-title"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="sm-ann-head">
-          <h2 id="sm-ann-title">{item.title}</h2>
-          <button type="button" className="sm-ann-close" onClick={onClose} aria-label="Close">
-            <X size={18} />
-          </button>
-        </div>
-
-        <dl className="sm-ann-meta">
-          {rows.map(([label, value]) => (
-            <React.Fragment key={label}>
-              <dt>{label}</dt>
-              <dd>{value}</dd>
-            </React.Fragment>
-          ))}
-        </dl>
-
-        <div className="sm-ann-body">{item.body}</div>
-      </div>
-    </div>
+    <section className="sm-card sm-pad">
+      <CardHead icon={<Megaphone size={16} strokeWidth={1.6} />} title="Company Announcements" />
+      {announcements.map((a) => (
+        <button
+          key={a.id}
+          type="button"
+          className="sm-row sm-row-btn"
+          onClick={(e) => go(announcementLink(a.id), e.currentTarget)}
+        >
+          <div>
+            <strong>{a.pinned ? "📌 " : ""}{a.title}</strong>
+            <small>{a.audience}{a.pinned ? " · Pinned" : ""}</small>
+          </div>
+        </button>
+      ))}
+    </section>
   );
 };
 
@@ -488,17 +493,26 @@ export function OverviewContent(): React.JSX.Element {
   const [asOf, setAsOf] = useState("2026-09-09");
   const [asOfOpen, setAsOfOpen] = useState(false);
   const [addWorkerOpen, setAddWorkerOpen] = useState(false);
-  const [openAnnouncement, setOpenAnnouncement] = useState<Announcement | null>(null);
   return (
     <>
+      {/* All colours come from the theme variables in AdminWorkspace.tsx,
+          so this page follows the light / dark theme automatically. */}
       <style>{`
         .sm-stat.is-clickable { transition: background-color 0.15s ease; }
-        .sm-stat.is-clickable:hover { background-color: #f1f1f1; }
-        .sm-stat.is-clickable:focus-visible { outline: 2px solid #14632c; outline-offset: -2px; }
-        .sm-ch .sm-link { color: #14632c; font-weight: 500; text-decoration: none; }
-        .sm-ch .sm-link:hover { color: #0f4d22;  }
-        .sm-alert .sm-link { color: #14632c; font-weight: 500; text-decoration: none; cursor: pointer; }
-        .sm-alert .sm-link:hover { color: #0f4d22; text-decoration: underline; }
+        .sm-stat.is-clickable:hover { background-color: var(--hover-soft); }
+        .sm-stat.is-clickable:focus-visible { outline: 2px solid var(--green); outline-offset: -2px; }
+        .sm-ch .sm-link { color: var(--green); font-weight: 500; text-decoration: none; }
+        .sm-ch .sm-link:hover { text-decoration: none; }
+        .sm-alert .sm-link { color: var(--green); font-weight: 500; text-decoration: none; cursor: pointer; }
+        .sm-alert .sm-link:hover { text-decoration: none; }
+
+        /* Clickable project name in "Projects & Assignments" */
+        .sm-proj-link {
+          display: block; padding: 0; border: 0; background: none;
+          font: inherit; color: inherit; text-align: left; cursor: pointer;
+        }
+        .sm-proj-link:hover strong { color: var(--green); text-decoration: none; }
+        .sm-proj-link:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; border-radius: 4px; }
 
         .sm-queue .sm-queue-row {
           display: flex;
@@ -508,15 +522,15 @@ export function OverviewContent(): React.JSX.Element {
           padding: 14px 0;
           background: transparent;
           border: 0;
-          border-bottom: 1px solid #e5e7eb;
+          border-bottom: 1px solid var(--line);
           text-align: left;
           cursor: pointer;
           transition: background-color 0.15s ease;
         }
         .sm-queue .sm-queue-row:last-child { border-bottom: 0; }
-        .sm-queue .sm-queue-row:hover { background-color: #f6f6f4; }
+        .sm-queue .sm-queue-row:hover { background-color: var(--hover-soft); }
 
-        /* Clickable announcement row */
+        /* Clickable rows (announcements, facilities) */
         .sm-row-btn {
           width: 100%;
           background: transparent;
@@ -527,40 +541,44 @@ export function OverviewContent(): React.JSX.Element {
           cursor: pointer;
           transition: background-color 0.15s ease;
         }
-        .sm-row-btn:hover { background-color: #f6f6f4; }
-        .sm-row-btn:focus-visible { outline: 2px solid #14632c; outline-offset: -2px; }
+        .sm-row-btn:hover { background-color: var(--hover-soft); }
+        .sm-row-btn:focus-visible { outline: 2px solid var(--green); outline-offset: -2px; }
+        /* Smaller Due soon badge in My Tasks */
+        .sm-task-due-pill {
+          padding: 4px 9px !important;
+          font-size: 12px !important;
+          line-height: 1.2;
+          min-height: 24px;
+          border-radius: 20px;
+          gap: 5px;
+        }
 
-        /* Announcement popup */
-        .sm-ann-overlay {
-          position: fixed; inset: 0; z-index: 1000;
-          display: flex; align-items: center; justify-content: center;
-          padding: 16px; overflow-y: auto;
-          background: rgba(40, 40, 40, 0.38);
-          backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+        .sm-task-due-pill::before {
+          width: 7px;
+          height: 7px;
         }
-        .sm-ann-modal {
-          width: 100%; max-width: 640px; box-sizing: border-box;
-          background: #fff; border-radius: 14px; padding: 22px 24px 24px;
-          box-shadow: 0 20px 50px rgba(0, 0, 0, 0.22);
+          /* Smaller daily status badges */
+        .sm-daily-status {
+          padding: 4px 10px !important;
+          font-size: 12px !important;
+          line-height: 1.2 !important;
+          min-height: 26px;
+          border-radius: 20px;
+          gap: 6px;
         }
-        .sm-ann-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
-        .sm-ann-head h2 { margin: 0; font-size: 17px; font-weight: 600; line-height: 1.3; }
-        .sm-ann-close {
-          flex: none; display: grid; place-items: center; width: 26px; height: 26px;
-          border: 0; border-radius: 6px; background: transparent; color: #6b6b66; cursor: pointer;
+
+        /* Smaller status dots */
+        .sm-daily-status::before {
+          width: 7px;
+          height: 7px;
         }
-        .sm-ann-close:hover { background: #f3f2ee; color: #1b1b18; }
-        .sm-ann-close:focus-visible { outline: 2px solid #14632c; outline-offset: 2px; }
-        .sm-ann-meta { display: grid; grid-template-columns: 170px 1fr; gap: 8px 0; margin: 0 0 16px; font-size: 13.5px; }
-        .sm-ann-meta dt { color: #6b6b66; }
-        .sm-ann-meta dd { margin: 0; }
-        .sm-ann-body {
-          padding: 14px 16px; font-size: 13.5px; line-height: 1.5;
-          background: #f7f6f2; border: 1px solid #e5e4de; border-radius: 10px;
-        }
-        @media (max-width: 560px) {
-          .sm-ann-meta { grid-template-columns: 1fr; gap: 2px; }
-          .sm-ann-meta dd { margin-bottom: 8px; }
+
+        /* Smaller Record button */
+        .sm-daily-record {
+          padding: 6px 12px !important;
+          font-size: 12px !important;
+          min-height: 32px;
+          border-radius: 8px;
         }
       `}</style>
 
@@ -589,12 +607,8 @@ export function OverviewContent(): React.JSX.Element {
       <DailyStatus />
       <div className="sm-grid2"><ProjectsTable /><CriticalAlerts /></div>
       <div className="sm-grid2"><AccommodationCard /><TasksCard /></div>
-      <div className="sm-grid2"><AnnouncementsCard onOpen={setOpenAnnouncement} /><EventsCard /></div>
+      <div className="sm-grid2"><AnnouncementsCard /><EventsCard /></div>
       <ContactsCard />
-
-      {openAnnouncement && (
-        <AnnouncementModal item={openAnnouncement} onClose={() => setOpenAnnouncement(null)} />
-      )}
 
       <AddWorkerPage open={addWorkerOpen} onClose={() => setAddWorkerOpen(false)} />
       <AsOfDateDialog

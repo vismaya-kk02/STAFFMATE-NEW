@@ -66,6 +66,23 @@ const DAY_WORKERS: DayWorker[] = [
   { id: "w11", name: "Vlad Moldovan", code: "SM-1121", role: "Machine Operator" },
 ];
 
+// AutoParts Slovakia roster (alphabetical, as shown in the reference design)
+const AUTOPARTS_WORKERS: DayWorker[] = [
+  { id: "a1", name: "Dragan Pavlović", code: "SM-1113", role: "Machine Operator" },
+  { id: "a2", name: "Ion Kravets", code: "SM-1118", role: "Machine Operator" },
+  { id: "a3", name: "Ion Pavlović", code: "SM-1114", role: "Packer" },
+  { id: "a4", name: "Ivan Petrenko", code: "SM-1042", role: "Production Operator", notEligible: true },
+  { id: "a5", name: "Maksym Koval", code: "SM-1142", role: "Packer" },
+  { id: "a6", name: "Marko Nguyen", code: "SM-1112", role: "Production Operator" },
+  { id: "a7", name: "Nikola Nguyen", code: "SM-1111", role: "Machine Operator" },
+  { id: "a8", name: "Tomislav Marković", code: "SM-1115", role: "Production Operator" },
+  { id: "a9", name: "Viorel Moldovan", code: "SM-1110", role: "Packer" },
+  { id: "a10", name: "Vlad Bratu", code: "SM-1117", role: "Assembler" },
+  { id: "a11", name: "Vlad Vasilev", code: "SM-1116", role: "Forklift Operator" },
+];
+const workersFor = (project: string): DayWorker[] =>
+  project === "AutoParts Slovakia" ? AUTOPARTS_WORKERS : DAY_WORKERS;
+
 const DEFAULT_REASON = "Scheduled day off / not scheduled to work";
 const HOLIDAY_REASON = "Factory holiday / shutdown";
 const REASONS = [DEFAULT_REASON, "Sick leave", "Approved leave", "Absent — no notice", HOLIDAY_REASON];
@@ -100,8 +117,21 @@ const addDays = (iso: string, n: number) => {
 const fmtDate = (iso: string) =>
   parseIso(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 
-const freshMarks = (): Record<string, Mark> =>
-  Object.fromEntries(DAY_WORKERS.map((w) => [w.id, { didNotWork: false, reason: DEFAULT_REASON, note: "" }]));
+const freshMarks = (list: DayWorker[] = DAY_WORKERS): Record<string, Mark> =>
+  Object.fromEntries(list.map((w) => [w.id, { didNotWork: false, reason: DEFAULT_REASON, note: "" }]));
+
+/* ---------- Confirmation records (who confirmed which project-day, and when) ---------- */
+const CONFIRMER = "Marek Máhr";
+interface Confirmation { by: string; at: string }
+const keyOf = (project: string, iso: string) => `${project}|${iso}`;
+const stamp = () => {
+  const d = new Date();
+  return `${toIso(d)} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+};
+// Demo data so the "Confirmed by …" state shows on first load
+const SEED_CONFIRMATIONS: Record<string, Confirmation> = {
+  [keyOf("AutoParts Slovakia", DEFAULT_DAY)]: { by: CONFIRMER, at: "2026-09-09 08:29" },
+};
 
 /* ---------- Factory holiday / shutdown modal ---------- */
 interface Holiday { project: string; from: string; to: string; note: string; exceptions: string[] }
@@ -215,37 +245,139 @@ const holidayCss = `
 .hl-apply{margin-top:14px;height:34px;font-size:13px}
 `;
 
+/* ---------- "Correct all as worked" modal (Needs review card) ---------- */
+function CorrectModal({ item, onClose, onConfirm }: {
+  item: ReviewItem;
+  onClose: () => void;
+  onConfirm: (reason: string) => void;
+}): React.JSX.Element {
+  const [reason, setReason] = useState("");
+  const [touched, setTouched] = useState(false);
+  const areaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => { setTimeout(() => areaRef.current?.focus(), 0); }, []);
+
+  // Close on Escape + lock page scroll while open
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
+  }, [onClose]);
+
+  const missing = touched && !reason.trim();
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setTouched(true);
+    if (!reason.trim()) return;
+    onConfirm(reason.trim());
+  };
+
+  return createPortal(
+    <>
+      <style>{modalCss}{correctCss}</style>
+      <div className="ap-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+        <form className="ap-modal cm-modal" role="dialog" aria-modal="true" aria-labelledby="cm-title" onSubmit={submit} noValidate>
+          <div className="ap-head">
+            <h2 id="cm-title">{item.worker}</h2>
+            <button type="button" className="ap-close" aria-label="Close" onClick={onClose}>
+              <X size={20} strokeWidth={1.5} />
+            </button>
+          </div>
+
+          <div className="ap-field">
+            <label htmlFor="cm-reason">
+              Reason for the corrections * (applied to each record and logged separately)
+            </label>
+            <textarea
+              id="cm-reason"
+              ref={areaRef}
+              className={missing ? "is-error" : ""}
+              rows={3}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              aria-invalid={missing}
+            />
+            {missing && <span className="ap-err">Enter a reason for the corrections.</span>}
+          </div>
+
+          <button type="submit" className="ap-save">
+            Correct {item.days} record{item.days === 1 ? "" : "s"} as worked
+          </button>
+        </form>
+      </div>
+    </>,
+    document.body,
+  );
+}
+
+const correctCss = `
+.ap-modal.cm-modal{max-width:640px}
+.cm-modal .ap-field textarea{width:100%;min-height:70px;padding:10px 12px;border:1px solid var(--line,#dedcd5);border-radius:6px;background:#fff;font:inherit;font-size:13px;line-height:1.45;color:var(--text,#1c1c1a);outline:none;resize:vertical;box-sizing:border-box}
+.cm-modal .ap-field textarea:focus{border-color:var(--green,#1a6b2f);box-shadow:0 0 0 3px rgba(26,107,47,.12)}
+.cm-modal .ap-field textarea.is-error{border-color:#b42318}
+.cm-modal .ap-save{margin-top:16px}
+`;
+
 /* ---------- Daily work status tab ---------- */
 function DailyWorkStatus({ holidayRef }: { holidayRef: React.MutableRefObject<(() => void) | null> }): React.JSX.Element {
   const projectNames = PROJECTS.filter((p) => p.status !== "Completed").map((p) => p.name);
-  const [project, setProject] = useState("Line 3 Assembly");
+  const [project, setProject] = useState("AutoParts Slovakia");
   const [day, setDay] = useState(DEFAULT_DAY);
-  const [marks, setMarks] = useState<Record<string, Mark>>(freshMarks);
-  const [state, setState] = useState<DayState>("not_started");
+  const [marks, setMarks] = useState<Record<string, Mark>>(() => freshMarks(workersFor("AutoParts Slovakia")));
+  const [confirmations, setConfirmations] = useState<Record<string, Confirmation>>(SEED_CONFIRMATIONS);
+  const [state, setState] = useState<DayState>(
+    SEED_CONFIRMATIONS[keyOf("AutoParts Slovakia", DEFAULT_DAY)] ? "confirmed" : "not_started",
+  );
   const [reviews, setReviews] = useState<ReviewItem[]>(INITIAL_REVIEWS);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [holidayOpen, setHolidayOpen] = useState(false);
+  // "Correct all as worked" dialog + the confirmation message shown after it
+  const [correcting, setCorrecting] = useState<ReviewItem | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   // Build the marks for a project/day, applying any saved holiday ranges that cover it.
-  const load = (proj: string, iso: string, list: Holiday[]) => {
+  const load = (proj: string, iso: string, list: Holiday[], conf: Record<string, Confirmation> = confirmations) => {
     const matches = list.filter((h) => h.project === proj && iso >= h.from && iso <= h.to);
-    const next = freshMarks();
+    const roster = workersFor(proj);
+    const next = freshMarks(roster);
     matches.forEach((h) => {
-      DAY_WORKERS.filter((w) => !w.notEligible && !h.exceptions.includes(w.id)).forEach((w) => {
+      roster.filter((w) => !w.notEligible && !h.exceptions.includes(w.id)).forEach((w) => {
         next[w.id] = { didNotWork: true, reason: HOLIDAY_REASON, note: h.note };
       });
     });
     setMarks(next);
-    setState(matches.length ? "draft" : "not_started");
+    setState(conf[keyOf(proj, iso)] ? "confirmed" : matches.length ? "draft" : "not_started");
   };
 
   const changeDay = (iso: string) => { if (iso) { setDay(iso); load(project, iso, holidays); } };
   const changeProject = (name: string) => { setProject(name); load(name, day, holidays); };
 
+  const dropConfirmation = () =>
+    setConfirmations((c) => { const n = { ...c }; delete n[keyOf(project, day)]; return n; });
+
   const update = (id: string, patch: Partial<Mark>) => {
     setMarks((m) => ({ ...m, [id]: { ...m[id], ...patch } }));
-    if (state === "confirmed") setState("draft"); // editing a confirmed day reopens it
+    if (state === "confirmed") { // editing a confirmed day reopens it
+      setState("draft");
+      dropConfirmation();
+    }
   };
+
+  const saveDraft = () => {
+    setState("draft");
+    dropConfirmation();
+  };
+
+  const confirmDay = () => {
+    setConfirmations((c) => ({ ...c, [keyOf(project, day)]: { by: CONFIRMER, at: stamp() } }));
+    setState("confirmed");
+  };
+
+  const confirmation = confirmations[keyOf(project, day)];
+  const workers = workersFor(project);
 
   // Called by the "Factory holiday / shutdown" button in the page header.
   holidayRef.current = () => setHolidayOpen(true);
@@ -257,13 +389,13 @@ function DailyWorkStatus({ holidayRef }: { holidayRef: React.MutableRefObject<((
     load(project, day, list); // refresh the visible day if it falls in the range
   };
 
-  const eligible = DAY_WORKERS.filter((w) => !w.notEligible);
-  const notEligibleCount = DAY_WORKERS.length - eligible.length;
+  const eligible = workers.filter((w) => !w.notEligible);
+  const notEligibleCount = workers.length - eligible.length;
   const didNotWork = eligible.filter((w) => marks[w.id].didNotWork).length;
   const willWork = eligible.length - didNotWork;
 
   const stats = [
-    { label: "On the list", value: DAY_WORKERS.length, caption: `Assigned to ${project} on ${fmtDate(day)}` },
+    { label: "On the list", value: workers.length, caption: `Assigned to ${project} on ${fmtDate(day)}` },
     { label: "Will be recorded as worked", value: willWork, caption: "Only after you confirm" },
     { label: "Did not work", value: didNotWork, caption: "With a reason each" },
     { label: "Not eligible (Social Insurance)", value: notEligibleCount, caption: "Never counted as worked", danger: true },
@@ -272,39 +404,44 @@ function DailyWorkStatus({ holidayRef }: { holidayRef: React.MutableRefObject<((
   return (
     <>
       <section className="sm-card dw-top">
-        <div className="dw-field">
-          <label htmlFor="dw-project">Project</label>
-          <div className="dw-select dw-select-lg">
-            <select id="dw-project" value={project} onChange={(e) => changeProject(e.target.value)}>
-              {projectNames.map((n) => <option key={n}>{n}</option>)}
-            </select>
-            <ChevronDown size={18} />
+        <div className="dw-left">
+          <div className="dw-field">
+            <label htmlFor="dw-project">Project</label>
+            <div className="dw-select dw-select-lg">
+              <select id="dw-project" value={project} onChange={(e) => changeProject(e.target.value)}>
+                {projectNames.map((n) => <option key={n}>{n}</option>)}
+              </select>
+              <ChevronDown size={18} />
+            </div>
+          </div>
+
+          <div className="dw-field">
+            <label htmlFor="dw-date">Date (previous day by default)</label>
+            <div className="dw-date">
+              <button type="button" className="dw-step" aria-label="Previous day" onClick={() => changeDay(addDays(day, -1))}>
+                <ChevronLeft size={16} />
+              </button>
+              <input id="dw-date" type="date" value={day} onChange={(e) => changeDay(e.target.value)} />
+              <button type="button" className="dw-step" aria-label="Next day" onClick={() => changeDay(addDays(day, 1))}>
+                <ChevronRight size={16} />
+              </button>
+            </div>
           </div>
         </div>
 
-        <div className="dw-field dw-field-right">
-          <label htmlFor="dw-date">Date (previous day by default)</label>
-          <div className="dw-date">
-            <button type="button" className="dw-step" aria-label="Previous day" onClick={() => changeDay(addDays(day, -1))}>
-              <ChevronLeft size={16} />
-            </button>
-            <input id="dw-date" type="date" value={day} onChange={(e) => changeDay(e.target.value)} />
-            <button type="button" className="dw-step" aria-label="Next day" onClick={() => changeDay(addDays(day, 1))}>
-              <ChevronRight size={16} />
-            </button>
-          </div>
-        </div>
-
-        <div className="dw-pills">
+        <div className={`dw-pills${state === "confirmed" ? " is-inline" : ""}`}>
           {state === "confirmed" ? (
-            <span className="sm-pill ok"><i className="dw-dot" />Confirmed</span>
+            <span className="sm-pill ok">
+              
+              Confirmed{confirmation ? ` by ${confirmation.by} · ${confirmation.at}` : ""}
+            </span>
           ) : (
             <>
               <span className="sm-pill bad">
-                <i className="dw-dot" />{state === "draft" ? "Draft — incomplete" : "Not started — incomplete"}
+                {state === "draft" ? "Draft — incomplete" : "Not started — incomplete"}
               </span>
               <span className="sm-pill bad">
-                <i className="dw-dot" />Overdue — due by 9:30 on {fmtDate(addDays(day, 1))} (Slovak time)
+                Overdue — due by 9:30 on {fmtDate(addDays(day, 1))} (Slovak time)
               </span>
             </>
           )}
@@ -322,6 +459,50 @@ function DailyWorkStatus({ holidayRef }: { holidayRef: React.MutableRefObject<((
       </section>
 
       <section className="sm-card dw-panel">
+        {state === "confirmed" ? (
+          <>
+        <div className="sm-table-wrap">
+          <table className="sm-table dw-table dw-table-ro">
+            <thead>
+              <tr>
+                <th>Worker</th><th>Role</th><th>Recorded outcome</th><th>Note</th><th aria-label="Actions" />
+              </tr>
+            </thead>
+            <tbody>
+              {workers.map((w) => {
+                const m = marks[w.id];
+                return (
+                  <tr key={w.id}>
+                    <td>
+                      <div className="dw-name">
+                        <strong>{w.name}</strong>
+                        {w.notEligible && <span className="dw-sp">SP</span>}
+                      </div>
+                      <small>{w.code}</small>
+                    </td>
+                    <td>{w.role}</td>
+                    <td>
+                      {w.notEligible ? (
+                        <span className="sm-pill bad">Not eligible — Social Insurance not verified</span>
+                      ) : m.didNotWork ? (
+                        <span className="sm-pill warn">Did not work — {m.reason}</span>
+                      ) : (
+                        <span className="sm-pill ok">Worked</span>
+                      )}
+                    </td>
+                    <td className="dw-note-ro">{m.note}</td>
+                    <td className="dw-act">
+                      <button type="button" className="dw-correct" onClick={saveDraft}>Correct</button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+          </>
+        ) : (
+          <>
         <div className="sm-table-wrap">
           <table className="sm-table dw-table">
             <thead>
@@ -330,7 +511,7 @@ function DailyWorkStatus({ holidayRef }: { holidayRef: React.MutableRefObject<((
               </tr>
             </thead>
             <tbody>
-              {DAY_WORKERS.map((w) => {
+              {workers.map((w) => {
                 const m = marks[w.id];
                 return (
                   <tr key={w.id}>
@@ -385,13 +566,18 @@ function DailyWorkStatus({ holidayRef }: { holidayRef: React.MutableRefObject<((
           </table>
         </div>
 
-        <div className="dw-actions">
-          <button type="button" className="sm-btn sm-btn-outline" onClick={() => setState("draft")}>Save draft</button>
-          <button type="button" className="sm-btn sm-btn-primary" onClick={() => setState("confirmed")}>
-            <CircleCheck size={16} /> Review and confirm
-          </button>
-        </div>
+
+       
+          </>
+        )}
       </section>
+
+      {notice && (
+        <div className="dw-notice" role="status">
+          <span>{notice}</span>
+          <button type="button" aria-label="Dismiss" onClick={() => setNotice(null)}><X size={16} /></button>
+        </div>
+      )}
 
       {reviews.length > 0 && (
         <section className="sm-card dw-review">
@@ -417,7 +603,7 @@ function DailyWorkStatus({ holidayRef }: { holidayRef: React.MutableRefObject<((
                   Open first day
                 </button>
                 <button type="button" className="sm-btn sm-btn-primary sm-btn-sm"
-                  onClick={() => setReviews((list) => list.filter((x) => x.id !== r.id))}>
+                  onClick={() => setCorrecting(r)}>
                   Correct all as worked
                 </button>
               </div>
@@ -435,10 +621,24 @@ function DailyWorkStatus({ holidayRef }: { holidayRef: React.MutableRefObject<((
         open={holidayOpen}
         project={project}
         defaultDate={day}
-        workers={DAY_WORKERS.filter((w) => !w.notEligible)}
+        workers={workers.filter((w) => !w.notEligible)}
         onClose={() => setHolidayOpen(false)}
         onApply={applyHoliday}
       />
+
+      {correcting && (
+        <CorrectModal
+          item={correcting}
+          onClose={() => setCorrecting(null)}
+          onConfirm={() => {
+            setReviews((list) => list.filter((x) => x.id !== correcting.id));
+            setNotice(
+              `${correcting.days} record${correcting.days === 1 ? "" : "s"} for ${correcting.worker} corrected as worked. The reason was logged for each record.`,
+            );
+            setCorrecting(null);
+          }}
+        />
+      )}
     </>
   );
 }
@@ -1305,7 +1505,7 @@ function ProjectDetail({ project, id, coordinators, onBack, onStats, onDaily, on
 
 /* ---------- Page ---------- */
 export default function ProjectsPage(): React.JSX.Element {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   // /admin/projects?tab=daily opens the Daily work status tab directly
   const initialTab = searchParams.get("tab");
   const [tab, setTab] = useState<Tab>(
@@ -1318,7 +1518,18 @@ export default function ProjectsPage(): React.JSX.Element {
   // Projects list is state so newly added projects show up in the table
   const [projects, setProjects] = useState<Project[]>(PROJECTS);
   const [addOpen, setAddOpen] = useState(false);
-  const [selected, setSelected] = useState<Project | null>(null);
+  // /admin/projects?detail=AutoParts%20Slovakia opens that project's detail page directly
+  const [selected, setSelected] = useState<Project | null>(() => {
+    const d = searchParams.get("detail");
+    return d ? PROJECTS.find((p) => p.name === d || p.pid === d) ?? null : null;
+  });
+  useEffect(() => {
+    const d = searchParams.get("detail");
+    if (!d) return;
+    const hit = projects.find((p) => p.name === d || p.pid === d);
+    if (hit) setSelected(hit);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState({ industry: "Any", location: "Any", coordinator: "Any", status: "Any" });
   const setFilter = (k: keyof typeof filters, v: string) => setFilters((f) => ({ ...f, [k]: v }));
@@ -1360,6 +1571,12 @@ export default function ProjectsPage(): React.JSX.Element {
     setSelected(updated);
   };
 
+  // Leave the detail page (and drop ?detail= from the URL so a refresh doesn't reopen it)
+  const closeDetail = () => {
+    setSelected(null);
+    if (searchParams.get("detail")) setSearchParams({}, { replace: true });
+  };
+
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
     return projects.filter((p) =>
@@ -1386,9 +1603,9 @@ export default function ProjectsPage(): React.JSX.Element {
           project={selected}
           id={selected.pid ?? "—"}
           coordinators={Array.from(new Set(projects.map((p) => p.coordinator)))}
-          onBack={() => setSelected(null)}
-          onStats={() => { setSelected(null); setTab("Statistics"); }}
-          onDaily={() => { setSelected(null); setTab("Daily work status"); }}
+          onBack={closeDetail}
+          onStats={() => { closeDetail(); setTab("Statistics"); }}
+          onDaily={() => { closeDetail(); setTab("Daily work status"); }}
           onSave={handleEdit}
         />
       </>
@@ -1608,7 +1825,7 @@ const css = `
 .dw-check{display:inline-flex;align-items:center;gap:10px;cursor:pointer}
 .dw-check input{width:22px;height:22px;accent-color:var(--green);cursor:pointer}
 .dw-table .dw-select{width:460px}
-.dw-note{width:210px;height:36px;padding:0 10px;border:1px solid var(--line);border-radius:6px;background:#faf9f6;font-size:16px;color:var(--text);outline:none}
+.dw-note{width:200px;height:36px;padding:0 10px;border:1px solid var(--line);border-radius:6px;background:#faf9f6;font-size:16px;color:var(--text);outline:none}
 .dw-note:focus{border-color:var(--green);background:#fff}
 .dw-actions{display:flex;justify-content:flex-end;gap:12px;padding:18px 28px 0}
 .dw-review{padding:22px 28px;margin-bottom:16px}
@@ -1764,7 +1981,7 @@ const css = `
 
 /* ---- Project detail page (sizes matched to the design screenshot at 125% scale) ---- */
 .pj-link{display:block;padding:0;text-align:left;color:var(--text);cursor:pointer}
-.pj-link:hover strong{color:var(--green);text-decoration:underline}
+.pj-link:hover strong{color:var(--green);text-decoration:none}
 .pd-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:24px;margin-bottom:16px}
 .pd-icon{flex:none;display:grid;place-items:center;width:67px;height:67px;border-radius:14px;background:#d4efd7;color:#14401f}
 .pd-icon svg{width:32px;height:32px}
@@ -1861,4 +2078,47 @@ const css = `
 @media (max-width:700px){
   .pd-kv{grid-template-columns:1fr;gap:2px 0}
 }
+
+/* ---- Daily work status: confirmed (read-only) table + review card ---- */
+.dw-table-ro{min-width:0;width:100%}
+.dw-table-ro th:nth-child(1){width:26%}
+.dw-table-ro th:nth-child(2){width:26%}
+.dw-table-ro tbody tr{border-top:1px solid var(--line)}
+.dw-table-ro .sm-pill{font-size:13px;padding:3px 11px}
+.dw-note-ro{color:var(--muted)}
+.dw-table-ro td.dw-act{text-align:right;padding-right:56px}
+.dw-correct{background:none;border:0;padding:0;color:var(--green);font-size:13.5px;font-weight:500;cursor:pointer}
+.dw-correct:hover{text-decoration:none}
+.dw-review .sm-btn-primary{background:#5fd68a;color:#073b1a;border-color:transparent}
+
+/* ---- Daily work status: top card (matches design) ---- */
+.dw-top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px 24px}
+.dw-left{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px 14px}
+.dw-pills{flex-basis:100%;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
+.dw-pills.is-inline{flex-basis:auto;margin-left:auto;align-self:center}
+.dw-pills .sm-pill.ok{display:inline-flex;align-items:center;white-space:nowrap}
+
+/* dark-theme safe controls: no hardcoded white */
+.dw-select select,
+.dw-date input,
+.dw-step{background:transparent;color:var(--text);border-color:var(--line)}
+.dw-step:hover{background:rgba(128,128,128,.14)}
+.dw-select select option{background:var(--card,#fff);color:var(--text)}
+.dw-date{align-items:center;gap:8px}
+.dw-date input{height:36px}
+.dw-step{width:32px;height:32px;border-radius:8px}
+
+/* ---- Project detail: theme-aware icon tile + pills (no hardcoded light colours) ---- */
+.pd-icon{background:color-mix(in srgb,var(--green) 20%,var(--card,#fff));color:var(--green)}
+.pd-pill{background:color-mix(in srgb,var(--muted) 16%,transparent);color:var(--text)}
+.pd-pill.is-muted{background:color-mix(in srgb,var(--muted) 16%,transparent);color:var(--muted)}
+.pd-pill.is-ok{background:color-mix(in srgb,var(--green) 16%,transparent);color:var(--green)}
+.pd-pill.is-info{background:color-mix(in srgb,#5b9cf0 18%,transparent);color:#5b9cf0}
+.pd-pill.is-warn{background:color-mix(in srgb,#d99a1b 18%,transparent);color:#d99a1b}
+.pd-pill.is-bad{background:color-mix(in srgb,#e5594b 18%,transparent);color:#e5594b}
+
+/* ---- Daily work status: message shown after "Correct all as worked" ---- */
+.dw-notice{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 14px;margin-bottom:12px;border-radius:10px;background:color-mix(in srgb,var(--green) 16%,transparent);color:var(--green);font-size:13px}
+.dw-notice button{display:grid;place-items:center;width:24px;height:24px;border-radius:6px;color:inherit;cursor:pointer}
+.dw-notice button:hover{background:rgba(128,128,128,.16)}
 `;

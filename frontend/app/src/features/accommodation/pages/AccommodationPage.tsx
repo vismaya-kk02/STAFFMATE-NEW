@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   Building2, ChevronDown, ChevronRight, Columns3, Download, Pencil, Plus, Search, SlidersHorizontal, X,
 } from "lucide-react";
@@ -567,15 +567,39 @@ function FacilityDetailView({
 
 /* ---------- Page ---------- */
 export default function AccommodationPage(): React.JSX.Element {
+  // Opens straight on the facility named in the URL, e.g. /admin/accommodation?facility=Villa%20Rezidencia%20Trnava
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlFacility = searchParams.get("facility");
+
   const [facilities, setFacilities] = useState<Facility[]>(INITIAL_FACILITIES);
   const [query, setQuery] = useState("");
   const [onlyAvailable, setOnlyAvailable] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
-  const [selected, setSelected] = useState<Facility | null>(null);
+  const [selected, setSelected] = useState<Facility | null>(
+    () => INITIAL_FACILITIES.find((f) => f.name === urlFacility) ?? null,
+  );
   const [showFilters, setShowFilters] = useState(false);
   const [fProject, setFProject] = useState("Any");
   const [fPerson, setFPerson] = useState("Any");
   const [fStatus, setFStatus] = useState("Any");
+
+  // If ?facility= changes while the page is already open, follow it
+  useEffect(() => {
+    if (!urlFacility) return;
+    const f = facilities.find((x) => x.name === urlFacility);
+    if (f) setSelected(f);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlFacility]);
+
+  // Back to the list; also clear ?facility= so the list stays open
+  const closeDetail = () => {
+    setSelected(null);
+    if (urlFacility) {
+      const next = new URLSearchParams(searchParams);
+      next.delete("facility");
+      setSearchParams(next, { replace: true });
+    }
+  };
 
   const projectOptions = useMemo(
     () => Array.from(new Set(facilities.flatMap((f) => f.projects))).sort(),
@@ -646,7 +670,7 @@ export default function AccommodationPage(): React.JSX.Element {
         <FacilityDetailView
           facility={selected}
           takenNames={facilities.filter((x) => x.name !== selected.name).map((x) => x.name.toLowerCase())}
-          onBack={() => setSelected(null)}
+          onBack={closeDetail}
           onUpdate={handleUpdate}
         />
       </>
@@ -854,10 +878,21 @@ const css = `
 }
 
 /* ---- Facility detail view ---- */
-.am-crumb a{color:var(--muted);text-decoration:none}
-.am-crumb a:hover{color:var(--text)}
-.fd-crumb-link{padding:0;border:0;background:transparent;font:inherit;color:var(--muted);cursor:pointer}
-.fd-crumb-link:hover{color:var(--text)}
+/* Breadcrumb link hover */
+.am-crumb a:hover,
+.am-crumb a:hover span,
+.am-crumb a:hover svg {
+  color: #166534 !important;
+  transition: color 0.2s ease;
+}
+
+/* Facility detail breadcrumb hover */
+.fd-crumb-link:hover,
+.fd-crumb-link:hover span,
+.fd-crumb-link:hover svg {
+  color: #166534 !important;
+  transition: color 0.2s ease;
+}
 
 .fd-card{background:#fff;border:1px solid var(--line);border-radius:12px}
 

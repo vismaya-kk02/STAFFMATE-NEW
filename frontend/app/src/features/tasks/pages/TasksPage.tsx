@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import React, { useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { ChevronDown, ChevronRight, Plus, X } from "lucide-react";
 
 type Status = "New" | "In Progress" | "Awaiting Input" | "Completed" | "Cancelled";
@@ -260,12 +260,20 @@ const Filter: React.FC<{
 );
 
 export default function TasksPage(): React.JSX.Element {
+  // Opens on the Company Announcements tab / one announcement named in the URL, e.g.
+  // /admin/tasks?tab=announcements&announcement=1
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlTab = searchParams.get("tab");
+  const urlAnnouncement = searchParams.get("announcement");
+
   const [tasks, setTasks] = useState<Task[]>(INITIAL_TASKS);
 
   const [announcements, setAnnouncements] =
     useState<Announcement[]>(INITIAL_ANNOUNCEMENTS);
 
-  const [tab, setTab] = useState<"Tasks" | "Company Announcements">("Tasks");
+  const [tab, setTab] = useState<"Tasks" | "Company Announcements">(() =>
+    urlTab === "announcements" || urlAnnouncement ? "Company Announcements" : "Tasks"
+  );
 
   const [status, setStatus] = useState("");
   const [priority, setPriority] = useState("");
@@ -281,9 +289,36 @@ export default function TasksPage(): React.JSX.Element {
   const [announcementForm, setAnnouncementForm] =
     useState<AnnouncementForm>(EMPTY_ANNOUNCEMENT);
 
-  // Selected announcement for details modal
+  // Selected announcement for details modal (opens straight away if ?announcement= is set)
   const [selectedAnnouncement, setSelectedAnnouncement] =
-    useState<Announcement | null>(null);
+    useState<Announcement | null>(
+      () =>
+        INITIAL_ANNOUNCEMENTS.find((item) => String(item.id) === urlAnnouncement) ??
+        null
+    );
+
+  // If the URL changes while the page is already open, follow it
+  useEffect(() => {
+    if (urlTab === "announcements" || urlAnnouncement) {
+      setTab("Company Announcements");
+    }
+    if (urlAnnouncement) {
+      const found = announcements.find((item) => String(item.id) === urlAnnouncement);
+      if (found) setSelectedAnnouncement(found);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlTab, urlAnnouncement]);
+
+  // Close the details popup; also clear ?announcement= so it doesn't reopen
+  const closeAnnouncementDetails = () => {
+    setSelectedAnnouncement(null);
+
+    if (urlAnnouncement) {
+      const next = new URLSearchParams(searchParams);
+      next.delete("announcement");
+      setSearchParams(next, { replace: true });
+    }
+  };
 
   // Selected task for details modal
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
@@ -922,7 +957,7 @@ export default function TasksPage(): React.JSX.Element {
           className="tk-modal-overlay"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) {
-              setSelectedAnnouncement(null);
+              closeAnnouncementDetails();
             }
           }}
         >
@@ -938,7 +973,7 @@ export default function TasksPage(): React.JSX.Element {
               <button
                 type="button"
                 className="tk-modal-close"
-                onClick={() => setSelectedAnnouncement(null)}
+                onClick={closeAnnouncementDetails}
                 aria-label="Close modal"
               >
                 <X size={19} />
@@ -1204,7 +1239,7 @@ const css = `
   padding: 0 32px 0 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--card);
   font: inherit;
   font-size: 13.5px;
   color: var(--text);
@@ -1237,7 +1272,8 @@ const css = `
   padding: 11px 16px;
   border: 0;
   border-top: 1px solid var(--line);
-  background: #fff;
+  background: transparent;
+  color: var(--text);
   font: inherit;
   cursor: pointer;
   transition: background 0.2s ease;
@@ -1259,7 +1295,7 @@ const css = `
 
 /* Grey hover */
 .tk-row:hover {
-  background: #f0f2f0;
+  background: var(--hover-soft);
 }
 
 .tk-row:focus-visible {
@@ -1288,15 +1324,16 @@ const css = `
   color: #2c55b8;
 }
 
-/* Company Announcements table */
+/* Company Announcements table (all colours come from the theme variables,
+   so it follows the light / dark theme automatically) */
 
 .tk-announcements-panel {
   width: 100%;
   padding: 0;
-  background: #fff;
-  border: 1px solid #e1e5e1;
+  background: var(--card);
+  border: 1px solid var(--line);
   border-radius: 16px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  box-shadow: none;
   overflow: hidden;
 }
 
@@ -1310,7 +1347,7 @@ const css = `
   min-width: 850px;
   border-collapse: collapse;
   table-layout: auto;
-  background: #fff;
+  background: transparent;
 }
 
 .tk-announcement-table thead th {
@@ -1318,9 +1355,11 @@ const css = `
   text-align: left;
   font-size: 13.5px;
   font-weight: 500;
-  color: #526052;
+  color: var(--muted);
   white-space: nowrap;
-  border-bottom: 1px solid #e2e6e2;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
 }
 
 .tk-announcement-table tbody td {
@@ -1328,15 +1367,17 @@ const css = `
   text-align: left;
   font-size: 14px;
   font-weight: 400;
-  color: #171d19;
+  color: var(--text);
   white-space: nowrap;
-  border-bottom: 1px solid #e9ece9;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
   height: 41px;
   box-sizing: border-box;
 }
 
 .tk-announcement-table tbody tr:last-child td {
-  border-bottom: none;
+  border-bottom: 0;
 }
 
 /* Full row hover */
@@ -1346,16 +1387,15 @@ const css = `
 }
 
 .tk-announcement-table tbody tr:hover td {
-  background: #f0f2f0;
+  background: var(--hover-soft);
 }
 
 .tk-announcement-table .tk-announcement-title {
   font-size: 14.5px;
-  font-weight: 650;
-  color: #111a14;
+  font-weight: 600;
+  color: var(--text);
   min-width: 300px;
 }
-
 
 .tk-announcement-title-btn {
   display: inline-block;
@@ -1364,17 +1404,21 @@ const css = `
   border: none;
   border-radius: 5px;
   background: transparent;
-  color: #111a14;
+  color: var(--text);
   font-family: inherit;
   font-size: 14.5px;
-  font-weight: 300;
+  font-weight: 600;
   text-align: left;
   cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease;
+  transition: color 0.2s ease;
+}
+
+.tk-announcement-title-btn:hover {
+  color: var(--green);
 }
 
 .tk-announcement-title-btn:focus-visible {
-  outline: 2px solid #147333;
+  outline: 2px solid var(--green);
   outline-offset: 2px;
 }
 
@@ -1382,7 +1426,7 @@ const css = `
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  color: #172019;
+  color: var(--text);
   font-size: 13.5px;
   white-space: nowrap;
 }
@@ -1393,7 +1437,7 @@ const css = `
 }
 
 .tk-not-pinned {
-  color: #333;
+  color: var(--muted);
   font-size: 16px;
 }
 

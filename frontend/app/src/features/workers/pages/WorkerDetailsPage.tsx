@@ -6,12 +6,15 @@ import {
   Ban, TrendingUp, ClipboardList,
 } from "lucide-react";
 import AddWorkerPage from "./AddWorkerPage"; // <- adjust the path to where your Add Worker dialog lives
+import WorkerTable, { STATUS_PILL } from "../components/WorkerTable";
+import WorkerFilters, { NO_FILTERS, hasActiveFilters, matchesFilters } from "../components/WorkerFilters";
+import type { Filters } from "../components/WorkerFilters";
 
-/* ---------- Types ---------- */
-type WorkerStatus = "Assigned to a project" | "Available" | "In preparation" | "Terminated" | "Did not start";
-type SpState = "Registered" | "No evidence" | "Uploaded, awaiting verification";
+/* ---------- Types (exported: the table and filter components import them) ---------- */
+export type WorkerStatus = "Assigned to a project" | "Available" | "In preparation" | "Terminated" | "Did not start";
+export type SpState = "Registered" | "No evidence" | "Uploaded, awaiting verification";
 
-interface Worker {
+export interface Worker {
   id: string;
   name: string;
   status: WorkerStatus;
@@ -105,33 +108,6 @@ const TABS: { key: string; label: string; match: (w: Worker) => boolean }[] = [
 
 /** Turn the ?tab= value from the URL into a valid tab key (falls back to "all"). */
 const tabFromUrl = (k: string | null) => (TABS.some((t) => t.key === k) ? (k as string) : "all");
-
-const STATUS_PILL: Record<WorkerStatus, string> = {
-  "Assigned to a project": "info",
-  Available: "warn",
-  "In preparation": "muted",
-  Terminated: "bad",
-  "Did not start": "bad",
-};
-const PAGE_SIZE = 25;
-
-/* ---------- Filters ---------- */
-const ANY = "Any";
-interface Filters { project: string; coordinator: string; sp: string; reason: string; nationality: string }
-const NO_FILTERS: Filters = { project: ANY, coordinator: ANY, sp: ANY, reason: ANY, nationality: ANY };
-
-const SP_OPTIONS: SpState[] = ["Registered", "No evidence", "Uploaded, awaiting verification"];
-const REASON_OPTIONS = ["Awaiting termination documentation", "Did-not-start check", "In preparation", "Available"];
-
-// The single pending-action reason a worker has (null = not in Pending action)
-const pendingReason = (w: Worker): string | null =>
-  w.status === "Available" ? "Available"
-  : w.status === "In preparation" ? "In preparation"
-  : w.status === "Did not start" ? "Did-not-start check"
-  : null;
-
-const uniqSorted = (list: (string | null | undefined)[]) =>
-  Array.from(new Set(list.filter((v): v is string => !!v && v !== "—"))).sort((a, b) => a.localeCompare(b));
 
 /* ---------- Adapter for the existing Add Worker dialog ---------- */
 // Only the fields of your dialog's WorkerForm that this page needs.
@@ -803,7 +779,6 @@ export default function WorkersPage(): React.JSX.Element {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [compact, setCompact] = useState(false);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   // Opens straight on the worker named in ?worker= (so Documents -> worker profile works)
   const [openId, setOpenId] = useState<string | null>(
     () => INITIAL_WORKERS.find((w) => w.id === urlWorker || w.name === urlWorker)?.id ?? null,
@@ -824,7 +799,7 @@ export default function WorkersPage(): React.JSX.Element {
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   const setFilter = (k: keyof Filters, v: string) => setFilters((f) => ({ ...f, [k]: v }));
   const clearFilters = () => setFilters(NO_FILTERS);
-  const filtersActive = Object.values(filters).some((v) => v !== ANY);
+  const filtersActive = hasActiveFilters(filters);
 
   const saveProfile = (id: string, patch: ProfilePatch, extra: Partial<WorkerDetailInfo>) => {
     setWorkers((list) => list.map((w) => (w.id === id ? { ...w, ...patch } : w)).sort((x, y) => x.name.localeCompare(y.name)));
@@ -847,25 +822,15 @@ export default function WorkersPage(): React.JSX.Element {
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const nat = (w: Worker) => extras[w.id]?.nationality ?? detailFor(w).nationality;
     return workers
       .filter(tab.match)
       .filter((w) => !q || w.name.toLowerCase().includes(q) || w.id.toLowerCase().includes(q))
-      .filter((w) =>
-        (filters.project === ANY || w.project === filters.project) &&
-        (filters.coordinator === ANY || w.coordinator === filters.coordinator) &&
-        (filters.sp === ANY || w.sp === filters.sp) &&
-        (filters.reason === ANY || pendingReason(w) === filters.reason) &&
-        (filters.nationality === ANY || nat(w) === filters.nationality),
-      );
+      .filter((w) => matchesFilters(w, filters, nationalityOf));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, query, workers, filters, extras]);
 
   useEffect(() => setPage(1), [tabKey, query, filters]);
 
-  const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-  const start = (page - 1) * PAGE_SIZE;
-  const pageRows = rows.slice(start, start + PAGE_SIZE);
-  const allChecked = pageRows.length > 0 && pageRows.every((w) => selected.has(w.id));
   const showPending = tabKey === "pending";
 
   const openWorker = openId ? workers.find((w) => w.id === openId) : undefined;
@@ -891,11 +856,6 @@ export default function WorkersPage(): React.JSX.Element {
     );
   }
 
-  const toggle = (id: string) =>
-    setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const toggleAll = () =>
-    setSelected((s) => { const n = new Set(s); pageRows.forEach((w) => (allChecked ? n.delete(w.id) : n.add(w.id))); return n; });
-
   const exportCsv = () => {
     const head = "ID,Name,Status,Project,Coordinator,Accommodation";
     const body = rows.map((w) => [w.id, w.name, w.status, w.project ?? "", w.coordinator, w.accommodation ?? ""].map((v) => `"${v}"`).join(","));
@@ -910,14 +870,6 @@ export default function WorkersPage(): React.JSX.Element {
     { label: "In preparation", value: count("prep") },
     { label: "Pending action", value: count("pending"), danger: true, caption: "Calculated, not stored" },
     { label: "Accommodated", value: count("accom") },
-  ];
-
-  const filterFields: [keyof Filters, string, string[]][] = [
-    ["project", "Project", uniqSorted(workers.map((w) => w.project))],
-    ["coordinator", "Coordinator", uniqSorted(workers.map((w) => w.coordinator))],
-    ["sp", "Social Insurance", SP_OPTIONS],
-    ["reason", "Pending action reason", REASON_OPTIONS],
-    ["nationality", "Nationality", uniqSorted(workers.map(nationalityOf))],
   ];
 
   return (
@@ -995,23 +947,13 @@ export default function WorkersPage(): React.JSX.Element {
         </div>
 
         {showFilters && (
-          <div className="wf-panel">
-            <div className="wf-grid">
-              {filterFields.map(([key, label, options]) => (
-                <div key={key} className="wf-field">
-                  <label htmlFor={`wf-${key}`}>{label}</label>
-                  <div className="wf-select">
-                    <select id={`wf-${key}`} value={filters[key]} onChange={(e) => setFilter(key, e.target.value)}>
-                      <option>{ANY}</option>
-                      {options.map((o) => <option key={o}>{o}</option>)}
-                    </select>
-                    <ChevronDown size={16} />
-                  </div>
-                </div>
-              ))}
-            </div>
-            <button type="button" className="wf-clear" onClick={clearFilters}>Clear filters</button>
-          </div>
+          <WorkerFilters
+            workers={workers}
+            filters={filters}
+            nationalityOf={nationalityOf}
+            onChange={setFilter}
+            onClear={clearFilters}
+          />
         )}
 
         {showPending && (
@@ -1021,55 +963,14 @@ export default function WorkersPage(): React.JSX.Element {
           </p>
         )}
 
-        <div className={`wk-scroll${compact ? " is-compact" : ""}`}>
-          <table className="sm-table wk-table">
-            <thead>
-              <tr>
-                <th className="wk-check"><input type="checkbox" checked={allChecked} onChange={toggleAll} aria-label="Select all" /></th>
-                <th>Worker</th><th>Worker status</th><th>Project</th><th>Coordinator</th>
-                {showPending && <th>Pending reason</th>}
-                <th>Accommodation</th><th>Documentation</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pageRows.map((w) => (
-                <tr key={w.id}>
-                  <td className="wk-check"><input type="checkbox" checked={selected.has(w.id)} onChange={() => toggle(w.id)} aria-label={`Select ${w.name}`} /></td>
-                  <td>
-                    <strong><button type="button" className="wk-link" onClick={() => setOpenId(w.id)}>{w.name}</button>{w.sp !== "Registered" && <span className="wk-sp">SP</span>}</strong>
-                    <small>{w.id} · <span className={`sm-pill ${w.sp === "Registered" ? "ok" : "bad"}`}>SP – {w.sp}</span></small>
-                  </td>
-                  <td>
-                    <span className={`sm-pill ${STATUS_PILL[w.status]}`}>{w.status}</span>
-                    {w.blocked && <span className="sm-pill bad wk-gap">Blocked</span>}
-                  </td>
-                  <td>
-                    {w.project ?? "—"}
-                    {w.intended && <span className="sm-pill muted wk-gap">Intended</span>}
-                  </td>
-                  <td>{w.coordinator}</td>
-                  {showPending && <td>{w.status === "Available" ? "Available" : "In preparation"}</td>}
-                  <td>{w.accommodation ?? "Not Accommodated"}</td>
-                  <td>
-                    {w.docsMissing ? <span className="sm-pill bad">{w.docsMissing} missing</span> : <span className="sm-pill ok">Complete</span>}
-                  </td>
-                </tr>
-              ))}
-              {pageRows.length === 0 && <tr><td colSpan={8} className="wk-none">No workers found.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="wk-foot">
-          <span>
-            Showing {rows.length === 0 ? 0 : start + 1}–{Math.min(start + PAGE_SIZE, rows.length)} of {rows.length} workers
-          </span>
-          <span className="wk-pager">
-            <button className="sm-btn sm-btn-outline" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</button>
-            Page {page} of {pages}
-            <button className="sm-btn sm-btn-outline" disabled={page >= pages} onClick={() => setPage(page + 1)}>Next</button>
-          </span>
-        </div>
+        <WorkerTable
+          rows={rows}
+          page={page}
+          onPageChange={setPage}
+          compact={compact}
+          showPending={showPending}
+          onOpenWorker={setOpenId}
+        />
       </section>
 
       {addOpen && (
@@ -1079,163 +980,112 @@ export default function WorkersPage(): React.JSX.Element {
   );
 }
 
+/* ---------- Styles ----------
+ * Table styles live in components/WorkerTable.tsx and filter-panel styles in
+ * components/WorkerFilters.tsx. Colours use the theme variables from AdminWorkspace.
+ */
 const css = `
-.wk-crumb{display:flex;align-items:center;gap:8px;font-size:16px;color:var(--muted);margin-bottom:11px}
+.wk-crumb{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);margin-bottom:8px}
 .wk-crumb b{color:var(--text);font-weight:600}
-.wk-desc{max-width:780px}
-.wk-stat{min-height:0;padding:16px 22px}
-.wk-stat .sm-stat-value{margin-top:6px}
-.wk-tabs{display:flex;gap:4px;overflow-x:auto;border-bottom:1px solid var(--line);margin-bottom:19px;scrollbar-width:none}
-.wk-tabs::-webkit-scrollbar{display:none}
-.wk-tabs button{flex:none;padding:12px 18px;font-size:17px;color:var(--muted);white-space:nowrap;border-bottom:2px solid transparent;margin-bottom:-1px}
-.wk-tabs button.is-active{color:var(--green);font-weight:600;border-bottom-color:var(--green)}
-.wk-panel{padding:0 0 16px;margin-bottom:19px}
-.wk-toolbar{display:flex;align-items:center;gap:14px;padding:20px 22px 14px}
-.wk-select{position:relative;width:340px;flex:none;color:var(--muted)}
-.wk-select select{appearance:none;width:100%;height:42px;padding:0 40px 0 18px;border:1px solid var(--line);border-radius:8px;background:#fff;font:inherit;font-size:16px;color:var(--text)}
-.wk-select svg{position:absolute;right:14px;top:13px;pointer-events:none}
-.wk-search{display:flex;align-items:center;gap:10px;flex:1;height:42px;padding:0 14px;border:1px solid var(--line);border-radius:8px;background:#faf9f6;color:var(--muted)}
-.wk-search input{flex:1;border:0;background:transparent;outline:none;font-size:16px;color:var(--text)}
-.wk-density{margin-left:auto;display:flex;padding:3px;border:1px solid var(--line);border-radius:8px;background:#f1f0ea}
-.wk-density button{width:42px;height:38px;display:grid;place-items:center;border-radius:6px}
-.wk-density button.is-on{background:var(--green-soft);color:var(--green)}
-.wk-note{margin:2px 22px 10px;font-size:15px;color:var(--muted);line-height:1.5}
-.wk-scroll{max-height:560px;overflow:auto;margin:0 12px}
-.wk-table{min-width:1050px}
-.wk-table thead th{position:sticky;top:0;background:#fff;z-index:1;white-space:nowrap;padding-left:12px}
-.wk-table td{padding:14px 12px;white-space:nowrap}
-.wk-scroll.is-compact .wk-table td{padding-top:6px;padding-bottom:6px}
-.wk-table small{display:flex;align-items:center;gap:6px;margin-top:3px}
-.wk-table small .sm-pill{padding:2px 10px;font-size:14px}
-.wk-check{width:46px;padding-left:12px!important}
-.wk-check input{width:18px;height:18px;accent-color:var(--green)}
-.wk-sp{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:5px;background:var(--danger);color:#fff;font-size:12px;font-weight:700;vertical-align:middle}
-.wk-gap{margin-left:6px}
-.wk-none{text-align:center;color:var(--muted);padding:32px 0!important}
-.wk-foot{display:flex;justify-content:space-between;align-items:center;padding:14px 22px 0;font-size:16px;color:var(--muted)}
-.wk-pager{display:flex;align-items:center;gap:10px}
-.wk-pager .sm-btn{height:36px;padding:0 14px}
-.wk-pager .sm-btn:disabled{opacity:.5;cursor:default}
-.sm-pill.info{background:#e3ecfb;color:#2c55b8}
-.sm-pill.muted{background:#eeede8;color:var(--muted)}
-.wk-notice{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 14px;margin-bottom:12px;border-radius:10px;background:#e1f0e4;color:#14401f;font-size:13.5px}
-.wk-notice button{display:grid;place-items:center;width:24px;height:24px;border-radius:6px;color:#14401f}
-.wk-notice button:hover{background:rgba(0,0,0,.06)}
-
-/* ---- Compact sizing (smaller cards and fonts) ---- */
-.wk-crumb{font-size:13px;margin-bottom:8px}
-.wk-desc{font-size:14px;line-height:1.45}
-.wk-stat{padding:9px 14px}
+.wk-crumb a:hover{color:var(--text)}
+.wk-desc{max-width:780px;font-size:14px;line-height:1.45}
+.wk-stat{min-height:0;padding:9px 14px}
 .wk-stat .sm-stat-title{font-size:12.5px}
 .wk-stat .sm-stat-value{font-size:22px;line-height:1.1;margin-top:3px}
 .wk-stat .sm-stat-caption{font-size:12px;margin-top:2px;line-height:1.3}
-.wk-tabs{margin-bottom:12px}
-.wk-tabs button{padding:8px 14px;font-size:14px}
+.wk-tabs{display:flex;gap:4px;overflow-x:auto;border-bottom:1px solid var(--line);margin-bottom:12px;scrollbar-width:none}
+.wk-tabs::-webkit-scrollbar{display:none}
+.wk-tabs button{flex:none;padding:8px 14px;font-size:14px;color:var(--muted);white-space:nowrap;border-bottom:2px solid transparent;margin-bottom:-1px}
+.wk-tabs button.is-active{color:var(--green);font-weight:600;border-bottom-color:var(--green)}
 .wk-panel{padding:0 0 10px;margin-bottom:12px}
-.wk-toolbar{gap:10px;padding:12px 16px 10px}
-.wk-select{width:260px}
-.wk-select select{height:34px;padding:0 32px 0 12px;font-size:13.5px}
-.wk-select svg{right:10px;top:9px;width:15px;height:15px}
-.wk-search{height:34px;padding:0 10px;gap:8px;font-size:13.5px}
-.wk-search input{font-size:13.5px}
+.wk-toolbar{display:flex;align-items:center;gap:10px;padding:12px 16px 10px}
+.wk-select{position:relative;width:260px;flex:none;color:var(--muted)}
+.wk-select select{appearance:none;width:100%;height:34px;padding:0 32px 0 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);font:inherit;font-size:13.5px;color:var(--text)}
+.wk-select svg{position:absolute;right:10px;top:9px;width:15px;height:15px;pointer-events:none}
+.wk-search{display:flex;align-items:center;gap:8px;flex:1;height:34px;padding:0 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--muted);font-size:13.5px}
+.wk-search input{flex:1;border:0;background:transparent;outline:none;font-size:13.5px;color:var(--text)}
 .wk-toolbar .sm-btn{height:34px;padding:0 12px;font-size:13.5px}
-.wk-density button{width:34px;height:30px}
-.wk-note{margin:2px 16px 8px;font-size:13px}
-.wk-table{font-size:13.5px}
-.wk-table thead th{font-size:12.5px;padding-top:8px;padding-bottom:8px}
-.wk-table td{padding:8px 12px}
-.wk-scroll.is-compact .wk-table td{padding-top:4px;padding-bottom:4px}
-.wk-table small{font-size:12px;margin-top:2px}
-.wk-table small .sm-pill{padding:1px 8px;font-size:12px}
-.wk-table .sm-pill{font-size:12.5px;padding:2px 10px}
-.wk-check{width:40px}
-.wk-check input{width:16px;height:16px}
-.wk-sp{font-size:11px;padding:0 6px}
-.wk-foot{padding:10px 16px 0;font-size:13.5px}
-.wk-pager{gap:8px}
-.wk-pager .sm-btn{height:30px;padding:0 12px;font-size:13px}
-
-/* ---- Filters panel ---- */
 .wk-toolbar .sm-btn.is-open{border-color:var(--green);color:var(--green)}
-.wf-panel{margin:0 16px 12px;padding:16px 18px 10px;border:1px solid var(--line);border-radius:10px;background:#faf9f6}
-.wf-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px 13px}
-.wf-field{display:flex;flex-direction:column;gap:6px;min-width:0}
-.wf-field label{font-size:12.5px;color:#4a4a46}
-.wf-select{position:relative}
-.wf-select select{appearance:none;-webkit-appearance:none;width:100%;height:37px;padding:0 36px 0 14px;border:1px solid var(--line);border-radius:8px;background:#fff;font:inherit;font-size:14px;color:var(--text);outline:none;cursor:pointer;box-sizing:border-box}
-.wf-select select:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(26,107,47,.12)}
-.wf-select svg{position:absolute;right:12px;top:50%;transform:translateY(-50%);width:16px;height:16px;pointer-events:none;color:var(--text)}
-.wf-clear{margin-top:10px;padding:7px 14px;font-size:14px;font-weight:500;color:var(--green);cursor:pointer;border-radius:6px}
-.wf-clear:hover{background:rgba(26,107,47,.08)}
-@media (max-width:1000px){.wf-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media (max-width:560px){.wf-grid{grid-template-columns:1fr}}
+.wk-density{margin-left:auto;display:flex;padding:3px;border:1px solid var(--line);border-radius:8px;background:var(--hover)}
+.wk-density button{width:34px;height:30px;display:grid;place-items:center;border-radius:6px}
+.wk-density button.is-on{background:var(--green-soft);color:var(--green)}
+.wk-note{margin:2px 16px 8px;font-size:13px;color:var(--muted);line-height:1.5}
 
-/* ---- Worker name link ---- */
-.wk-link{padding:0;text-align:left;color:var(--text);font:inherit;font-weight:inherit;cursor:pointer}
-.wk-link:hover{color:var(--green);text-decoration:underline}
+/* status pills used by the table and the detail page */
+.sm-pill.info{background:#e3ecfb;color:#2c55b8}
+.sm-pill.muted{background:var(--hover);color:var(--muted)}
+html[data-theme="dark"] .sm-pill.info{background:#1f3350;color:#9db8ff}
+
+.wk-notice{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 14px;margin-bottom:12px;border-radius:10px;background:var(--green-soft);color:var(--green);font-size:13.5px}
+.wk-notice button{display:grid;place-items:center;width:24px;height:24px;border-radius:6px;color:var(--green)}
+.wk-notice button:hover{background:var(--hover)}
 
 /* ---- Worker detail page ---- */
-.wk-crumb a:hover{color:var(--text)}
-.wd-head{display:flex;align-items:center;gap:16px;padding:22px 24px;margin-bottom:14px}
-.wd-avatar{flex:none;display:grid;place-items:center;width:67px;height:67px;border-radius:14px;background:#d4efd7;color:#14401f;font-size:22px;font-weight:700}
+.wd-head{display:flex;align-items:center;gap:12px;padding:22px 18px;margin-bottom:10px}
+.wd-avatar{flex:none;display:grid;place-items:center;width:44px;height:44px;border-radius:10px;background:var(--green-soft);color:var(--green);font-size:16px;font-weight:700}
 .wd-who{flex:1;min-width:0}
-.wd-who h1{margin:0;font-size:23px;line-height:1.2;font-weight:600;color:var(--text)}
-.wd-who h1 span{font-size:17px;font-weight:500;color:var(--muted)}
-.wd-who p{margin:7px 0 0;font-size:15.5px;color:var(--muted)}
-.wd-head-btns{display:flex;gap:10px;flex:none}
-.wd-head .sm-btn,.wd-panel-head .sm-btn,.wd-btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;height:38px;padding:0 17px;border-radius:8px;font-size:14px;line-height:1;white-space:nowrap}
-.wd-head .sm-btn svg,.wd-panel-head .sm-btn svg,.wd-btn svg{width:16px;height:16px;flex:none}
-.wd-sum{display:grid;grid-template-columns:1.55fr 1fr 1.1fr 1fr 1.2fr 1fr 1fr;padding:0;margin-bottom:14px;overflow:hidden}
-.wd-sum>div{padding:16px 18px 18px;border-left:1px solid var(--line);min-width:0}
+.wd-who h1{margin:0;font-size:20px;line-height:1.2;font-weight:600;color:var(--text)}
+.wd-who h1 span{font-size:14px;font-weight:500;color:var(--muted)}
+.wd-who p{margin:3px 0 0;font-size:14px;color:var(--muted)}
+.wd-head-btns{display:flex;gap:8px;flex:none}
+.wd-head .sm-btn,.wd-panel-head .sm-btn,.wd-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;font-size:13px;line-height:1;white-space:nowrap}
+.wd-head .sm-btn svg,.wd-panel-head .sm-btn svg,.wd-btn svg{width:14px;height:14px;flex:none}
+
+.wd-sum{display:grid;grid-template-columns:1.55fr 1fr 1.1fr 1fr 1.2fr 1fr 1fr;padding:0;margin-bottom:10px;overflow:hidden}
+.wd-sum>div{padding:10px 12px 11px;border-left:1px solid var(--line);min-width:0}
 .wd-sum>div:first-child{border-left:0}
-.wd-k{font-size:13.5px;color:var(--muted);line-height:1.3}
-.wd-v{margin-top:9px;font-size:14px}
-.wd-strong{font-size:16px;font-weight:600;line-height:1.35;color:var(--text)}
-.wd-pill::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:currentColor;margin-right:8px;vertical-align:middle}
-.wd-life{padding:16px 22px 18px;margin-bottom:14px}
-.wd-life-title{font-size:15.5px;color:var(--muted);margin-bottom:12px}
+.wd-k{font-size:12px;color:var(--muted);line-height:1.3}
+.wd-v{margin-top:5px;font-size:12.5px}
+.wd-strong{font-size:13.5px;font-weight:600;line-height:1.3;color:var(--text)}
+.wd-pill::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor;margin-right:6px;vertical-align:middle}
+.wd-pill{font-size:12px;padding:2px 9px}
+
+.wd-life{padding:10px 16px 12px;margin-bottom:10px}
+.wd-life-title{font-size:13px;color:var(--muted);margin-bottom:8px}
 .wd-steps{display:flex}
-.wd-step{display:inline-flex;align-items:center;gap:8px;height:42px;padding:0 28px 0 34px;margin-left:-6px;font-size:15.5px;font-weight:500;white-space:nowrap;background:#eeede8;color:var(--muted);clip-path:polygon(0 0,calc(100% - 16px) 0,100% 50%,calc(100% - 16px) 100%,0 100%,16px 50%)}
-.wd-step:first-child{margin-left:0;padding-left:20px;clip-path:polygon(0 0,calc(100% - 16px) 0,100% 50%,calc(100% - 16px) 100%,0 100%)}
-.wd-step.is-done{background:#c8ebcf;color:#14401f}
-.wd-step.is-current{background:#14632c;color:#fff;font-weight:600}
-.wd-step.is-current.is-bad{background:#b42318}
-.wd-tabs{display:flex;gap:6px;overflow-x:auto;border-bottom:1px solid var(--line);margin-bottom:14px;scrollbar-width:none}
+.wd-step{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 20px 0 26px;margin-left:-6px;font-size:13px;font-weight:500;white-space:nowrap;background:var(--hover);color:var(--muted);clip-path:polygon(0 0,calc(100% - 12px) 0,100% 50%,calc(100% - 12px) 100%,0 100%,12px 50%)}
+.wd-step:first-child{margin-left:0;padding-left:14px;clip-path:polygon(0 0,calc(100% - 12px) 0,100% 50%,calc(100% - 12px) 100%,0 100%)}
+.wd-step.is-done{background:var(--green-soft);color:var(--green)}
+.wd-step.is-current{background:var(--green);color:var(--on-green);font-weight:600}
+.wd-step.is-current.is-bad{background:#b42318;color:#fff}
+
+.wd-tabs{display:flex;gap:4px;overflow-x:auto;border-bottom:1px solid var(--line);margin-bottom:10px;scrollbar-width:none}
 .wd-tabs::-webkit-scrollbar{display:none}
-.wd-tabs button{flex:none;padding:10px 16px 11px;font-size:15.5px;color:var(--muted);white-space:nowrap;border-bottom:2px solid transparent;margin-bottom:-1px}
+.wd-tabs button{flex:none;padding:7px 13px 8px;font-size:13.5px;color:var(--muted);white-space:nowrap;border-bottom:2px solid transparent;margin-bottom:-1px}
 .wd-tabs button.is-active{color:var(--green);font-weight:600;border-bottom-color:var(--green)}
-.wd-panel{padding:20px 24px 22px;margin-bottom:16px}
-.wd-panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
-.wd-panel-head h3,.wd-sub{margin:0;font-size:16px;font-weight:600;color:var(--text)}
-.wd-sub{margin:22px 0 8px}
-.wd-kv{display:grid;grid-template-columns:224px 1fr;gap:13px 18px;margin:0;font-size:15.5px;line-height:1.35}
+
+.wd-panel{padding:14px 18px 16px;margin-bottom:12px}
+.wd-panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+.wd-panel-head h3,.wd-sub{margin:0;font-size:14px;font-weight:600;color:var(--text)}
+.wd-sub{margin:16px 0 6px}
+.wd-kv{display:grid;grid-template-columns:190px 1fr;gap:9px 14px;margin:0;font-size:13.5px;line-height:1.35}
 .wd-kv dt{color:var(--muted)}
 .wd-kv dd{margin:0;color:var(--text)}
 .wd-muted{color:var(--muted)}
 .wd-green{color:var(--green);font-weight:500}
-.wd-table{width:100%;font-size:15px}
-.wd-table th{font-size:14px;font-weight:500;color:var(--muted);white-space:nowrap}
-.wd-table td{white-space:nowrap;padding-top:13px;padding-bottom:13px}
-.wd-btn{margin-top:14px}
-.wd-foot{margin:12px 0 0;font-size:14.5px}
-.wd-empty{margin:4px 0;color:var(--muted);font-size:15.5px}
-.wd-drop{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-height:88px;padding:18px;border:1.5px dashed #b9b8b0;border-radius:12px;color:var(--text);font-size:15.5px;text-align:center;cursor:pointer}
-.wd-drop svg{color:var(--text)}
-.wd-drop:hover,.wd-drop:focus-visible{background:#f6f9f6;border-color:var(--green);outline:none}
+.wd-table{width:100%;font-size:13px}
+.wd-table th{font-size:12px;font-weight:500;color:var(--muted);white-space:nowrap}
+.wd-table td{white-space:nowrap;padding-top:8px;padding-bottom:8px}
+.wd-btn{margin-top:10px}
+.wd-foot{margin:8px 0 0;font-size:12.5px}
+.wd-empty{margin:4px 0;color:var(--muted);font-size:13.5px}
+
+.wd-drop{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:60px;padding:12px;border:1.5px dashed var(--line);border-radius:10px;color:var(--text);font-size:13px;text-align:center;cursor:pointer}
+.wd-drop svg{width:18px;height:18px;color:var(--text)}
+.wd-drop:hover,.wd-drop:focus-visible{background:var(--hover-soft);border-color:var(--green);outline:none}
 .wd-docs{margin-top:8px}
-.wd-doc{display:grid;grid-template-columns:minmax(220px,1.3fr) minmax(220px,1.7fr) 190px 90px;align-items:center;gap:12px;padding:16px 14px;border-bottom:1px solid var(--line)}
-.wd-doc strong{display:block;font-size:16px;font-weight:600}
-.wd-doc small{display:block;margin-top:3px;font-size:14.5px;color:var(--muted)}
+.wd-doc{display:grid;grid-template-columns:minmax(200px,1.3fr) minmax(200px,1.7fr) 170px 80px;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line)}
+.wd-doc strong{display:block;font-size:13.5px;font-weight:600}
+.wd-doc small{display:block;margin-top:2px;font-size:12px;color:var(--muted)}
 .wd-files{display:flex;flex-wrap:wrap;gap:8px}
-.wd-file{display:inline-flex;align-items:center;gap:8px;padding:5px 11px;border-radius:7px;background:#f1f0ea;font-size:14.5px;color:var(--text)}
+.wd-file{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:7px;background:var(--hover);font-size:12.5px;color:var(--text)}
 .wd-doc-act{text-align:right}
-.wd-link{padding:0;color:var(--green);font-size:15px;font-weight:500;cursor:pointer;background:none}
-.wd-link:hover{text-decoration:underline}
-.wd-add{display:inline-flex;align-items:center;gap:8px;margin:8px 0 8px 32px;padding:0;color:var(--green);font-size:15px;font-weight:500;cursor:pointer;background:none}
-.wd-add:hover{text-decoration:underline}
-.wd-event{display:flex;flex-direction:column;gap:6px;padding:8px 4px}
-.wd-event strong{font-size:16.5px}
-.wd-event span{color:var(--muted);font-size:15px}
+.wd-link{padding:0;color:var(--green);font-size:13px;font-weight:500;cursor:pointer;background:none}
+.wd-add{display:inline-flex;align-items:center;gap:8px;margin:6px 0 6px 28px;padding:0;color:var(--green);font-size:13px;font-weight:500;cursor:pointer;background:none}
+.wd-event{display:flex;flex-direction:column;gap:6px;padding:4px}
+.wd-event strong{font-size:14px}
+.wd-event span{color:var(--muted);font-size:13px}
+
 @media (max-width:1100px){
   .wd-sum{grid-template-columns:repeat(3,1fr)}
   .wd-sum>div{border-top:1px solid var(--line)}
@@ -1247,111 +1097,43 @@ const css = `
   .wd-kv dd{margin-bottom:10px}
 }
 
-/* ---- Worker detail page: compact sizing (matches the list page) ---- */
-.wd-head{gap:12px;padding:22px 18px;margin-bottom:10px}
-.wd-avatar{width:44px;height:44px;border-radius:10px;font-size:16px}
-.wd-who h1{font-size:20px}
-.wd-who h1 span{font-size:14px}
-.wd-who p{margin-top:3px;font-size:14px}
-.wd-head-btns{gap:8px}
-.wd-head .sm-btn,.wd-panel-head .sm-btn,.wd-btn{height:32px;padding:0 12px;gap:6px;font-size:13px}
-.wd-head .sm-btn svg,.wd-panel-head .sm-btn svg,.wd-btn svg{width:14px;height:14px}
-
-.wd-sum{margin-bottom:10px}
-.wd-sum>div{padding:10px 12px 11px}
-.wd-k{font-size:12px}
-.wd-v{margin-top:5px;font-size:12.5px}
-.wd-strong{font-size:13.5px;line-height:1.3}
-.wd-pill::before{width:6px;height:6px;margin-right:6px}
-.wd-pill{font-size:12px;padding:2px 9px}
-
-.wd-life{padding:10px 16px 12px;margin-bottom:10px}
-.wd-life-title{font-size:13px;margin-bottom:8px}
-.wd-step{height:32px;padding:0 20px 0 26px;font-size:13px;gap:6px;
-  clip-path:polygon(0 0,calc(100% - 12px) 0,100% 50%,calc(100% - 12px) 100%,0 100%,12px 50%)}
-.wd-step:first-child{padding-left:14px;
-  clip-path:polygon(0 0,calc(100% - 12px) 0,100% 50%,calc(100% - 12px) 100%,0 100%)}
-
-.wd-tabs{margin-bottom:10px;gap:4px}
-.wd-tabs button{padding:7px 13px 8px;font-size:13.5px}
-
-.wd-panel{padding:14px 18px 16px;margin-bottom:12px}
-.wd-panel-head{margin-bottom:10px}
-.wd-panel-head h3,.wd-sub{font-size:14px}
-.wd-sub{margin:16px 0 6px}
-.wd-kv{grid-template-columns:190px 1fr;gap:9px 14px;font-size:13.5px}
-.wd-table{font-size:13px}
-.wd-table th{font-size:12px}
-.wd-table td{padding-top:8px;padding-bottom:8px}
-.wd-btn{margin-top:10px}
-.wd-foot{margin-top:8px;font-size:12.5px}
-.wd-empty{font-size:13.5px}
-
-.wd-drop{min-height:60px;padding:12px;gap:6px;font-size:13px;border-radius:10px}
-.wd-drop svg{width:18px;height:18px}
-.wd-doc{grid-template-columns:minmax(200px,1.3fr) minmax(200px,1.7fr) 170px 80px;gap:10px;padding:10px 12px}
-.wd-doc strong{font-size:13.5px}
-.wd-doc small{font-size:12px;margin-top:2px}
-.wd-file{padding:3px 9px;font-size:12.5px;gap:6px}
-.wd-link,.wd-add{font-size:13px}
-.wd-add{margin:6px 0 6px 28px}
-.wd-event{padding:4px}
-.wd-event strong{font-size:14px}
-.wd-event span{font-size:13px}
-
 /* ---- Blocked banner + status / pending action card ---- */
-.wd-blocked{display:flex;align-items:center;gap:10px;padding:9px 14px;margin-bottom:12px;border-radius:10px;background:#fadadb;color:#8a1c14;font-size:13.5px;font-weight:500}
+.wd-blocked{display:flex;align-items:center;gap:10px;padding:9px 14px;margin-bottom:12px;border-radius:10px;background:var(--danger-bg);color:var(--danger);font-size:13.5px;font-weight:500}
 .wd-blocked svg{flex:none}
 .wd-status{padding:14px 18px 16px;margin-bottom:10px}
 .wd-status-title{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:14px;font-weight:600;color:var(--text)}
 .wd-status .wd-kv{grid-template-columns:190px 1fr;align-items:center}
 .wd-status-note{margin-left:8px;color:var(--muted)}
-.wd-pending{display:flex;align-items:center;gap:10px;margin-top:12px;padding:9px 14px;border-radius:8px;background:#fcebc4;color:#5c4000;font-size:13px;line-height:1.4}
+.wd-pending{display:flex;align-items:center;gap:10px;margin-top:12px;padding:9px 14px;border-radius:8px;background:var(--warn-bg);color:var(--warn-text);font-size:13px;line-height:1.4}
 .wd-pending svg{flex:none}
 .wd-pending b{font-weight:600}
 
-/* ---- Begin termination dialog ---- */
-.tm-overlay{position:fixed;inset:0;z-index:200;display:grid;place-items:center;padding:20px;background:rgba(20,24,22,.32);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
-.tm-dialog{width:100%;max-width:620px;padding:22px 24px 24px;border-radius:16px;background:#fff;box-shadow:0 20px 60px rgba(0,0,0,.2)}
-.tm-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
-.tm-head h2{margin:0;font-size:18px;font-weight:600;color:var(--text)}
-.tm-close{display:grid;place-items:center;width:30px;height:30px;border-radius:8px;color:var(--muted);cursor:pointer}
-.tm-close:hover{background:#f1f0ea;color:var(--text)}
-.tm-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
-.tm-field{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--muted)}
+/* ---- Begin termination / Edit profile dialogs ---- */
+.tm-overlay{position:fixed;inset:0;z-index:200;display:grid;place-items:center;padding:20px;background:var(--overlay);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.tm-dialog{width:100%;max-width:520px;padding:16px 20px 18px;border-radius:14px;background:var(--card);color:var(--text);border:1px solid var(--line);box-shadow:var(--shadow);max-height:calc(100vh - 56px);overflow-y:auto}
+.tm-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.tm-head h2{margin:0;font-size:16px;font-weight:600;color:var(--text)}
+.tm-close{display:grid;place-items:center;width:26px;height:26px;border-radius:8px;color:var(--muted);cursor:pointer}
+.tm-close:hover{background:var(--hover);color:var(--text)}
+.tm-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px;margin-bottom:10px}
+.tm-wide{grid-column:1/-1}
+.tm-field{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
 .tm-field b{font-weight:500}
-.tm-field input,.tm-select select{width:100%;height:36px;padding:0 12px;border:1px solid var(--line);border-radius:8px;background:#fff;font:inherit;font-size:13.5px;color:var(--text)}
+.tm-field input,.tm-select select{width:100%;height:32px;padding:0 10px;border:1px solid var(--line);border-radius:7px;background:var(--card);font:inherit;font-size:13px;color:var(--text)}
 .tm-field input:focus,.tm-select select:focus{outline:2px solid var(--green);outline-offset:-1px}
 .tm-select{position:relative;display:block}
-.tm-select select{appearance:none;padding-right:34px}
-.tm-select svg{position:absolute;right:11px;top:10px;pointer-events:none;color:var(--text)}
-.tm-note{margin:0 0 16px;font-size:13px;line-height:1.55;color:var(--muted)}
+.tm-select select{appearance:none;padding-right:30px}
+.tm-select svg{position:absolute;right:9px;top:8px;width:15px;height:15px;pointer-events:none;color:var(--muted)}
+.tm-note{margin:0 0 12px;font-size:12px;line-height:1.5;color:var(--muted)}
 .tm-note strong{color:var(--text);font-weight:600}
-.tm-submit{height:36px;padding:0 16px;font-size:13.5px;font-weight:600;border-radius:8px}
+.tm-submit{height:32px;padding:0 14px;font-size:13px;font-weight:600;border-radius:8px}
 .tm-submit:disabled{opacity:.5;cursor:default}
-.tm-dialog{max-height:calc(100vh - 40px);overflow-y:auto}
-.tm-wide{grid-column:1/-1}
-.tm-grid{row-gap:14px}
-
-/* ---- Dialog: slim rounded scrollbar (inset from the rounded corners) ---- */
-.tm-dialog::-webkit-scrollbar{width:10px}
-.tm-dialog::-webkit-scrollbar-track{background:transparent;margin:14px 0}
-.tm-dialog::-webkit-scrollbar-thumb{background:#c9c8c1;border-radius:999px;border:2px solid transparent;background-clip:padding-box}
-.tm-dialog::-webkit-scrollbar-thumb:hover{background:#a9a8a0;background-clip:padding-box;border:2px solid transparent}
-
-/* ---- Dialog: smaller card ---- */
-.tm-dialog{max-width:520px;padding:16px 20px 18px;border-radius:14px;max-height:calc(100vh - 56px)}
-.tm-head{margin-bottom:12px}
-.tm-head h2{font-size:16px}
-.tm-close{width:26px;height:26px}
-.tm-grid{gap:10px 12px;margin-bottom:10px}
-.tm-field{gap:4px;font-size:12px}
-.tm-field input,.tm-select select{height:32px;padding:0 10px;font-size:13px;border-radius:7px}
-.tm-select select{padding-right:30px}
-.tm-select svg{top:8px;right:9px;width:15px;height:15px}
-.tm-note{margin:0 0 12px;font-size:12px;line-height:1.5}
-.tm-submit{height:32px;padding:0 14px;font-size:13px}
 @media (max-width:640px){
   .tm-grid{grid-template-columns:1fr}
 }
+
+/* slim rounded scrollbar inside the dialogs */
+.tm-dialog::-webkit-scrollbar{width:10px}
+.tm-dialog::-webkit-scrollbar-track{background:transparent;margin:14px 0}
+.tm-dialog::-webkit-scrollbar-thumb{background:var(--line);border-radius:999px;border:2px solid transparent;background-clip:padding-box}
 `;
