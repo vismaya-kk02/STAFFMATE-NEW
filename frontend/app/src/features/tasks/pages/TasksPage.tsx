@@ -1479,7 +1479,7 @@ const css = `
 
 .tk-modal-header h2 {
   margin: 0;
-  font-size: 21px;
+  font-size: 18px;
   font-weight: 650;
   line-height: 1.3;
   color: #202722;

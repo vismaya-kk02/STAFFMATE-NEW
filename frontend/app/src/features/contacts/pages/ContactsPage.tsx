@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { ChevronRight, Plus, Search, Star, X } from "lucide-react";
 
 /* ---------- Types ---------- */
@@ -72,7 +72,11 @@ type View = "people" | "companies";
 
 const INITIAL_CONTACTS: Contact[] = [
   { id: 1, name: "Jana Kollárová", role: "Coordinator", organisation: "Staffmate s. r. o.", category: "Staffmate", phone: "+421 900 111 222", email: "jana.k@staffmate.sk", linked: null, important: true, notes: "" },
-  { id: 2, name: "Peter Vrábel", role: "Coordinator", organisation: "Staffmate s. r. o.", category: "Staffmate", phone: "+421 900 777 888", email: "peter.v@staffmate.sk", linked: null, important: false, notes: "" },
+  { id: 2, name: "Tomáš Beňo", role: "Site Manager", organisation: "Bosch Automotive s.r.o.", category: "Clients & Factories", phone: "+421 900 333 444", email: "t.beno@bosch.sk", linked: "AutoParts Slovakia", important: true, notes: "" },
+  { id: 3, name: "Silvia Hraško", role: "Property Manager", organisation: "Rezidencia Partner s.r.o.", category: "Accommodation", phone: "+421 900 555 666", email: "silvia@rezidenciapartner.sk", linked: "Villa Rezidencia Trnava", important: true, notes: "" },
+  { id: 4, name: "Peter Vrábel", role: "Coordinator", organisation: "Staffmate s. r. o.", category: "Staffmate", phone: "+421 900 777 888", email: "peter.v@staffmate.sk", linked: null, important: false, notes: "" },
+  { id: 5, name: "Rudolf Baláž", role: "HR Manager", organisation: "Kia Motors Slovakia", category: "Clients & Factories", phone: "+421 900 222 111", email: "r.balaz@kia.sk", linked: "Line 3 Assembly", important: false, notes: "" },
+  { id: 6, name: "Roman Kubiš", role: "Owner", organisation: "Nitra Hostel s.r.o.", category: "Accommodation", phone: "+421 900 888 999", email: "roman@nitrahostel.sk", linked: "Hostel Nitra Central", important: false, notes: "" },
 ];
 
 const company = (
@@ -84,13 +88,15 @@ const company = (
   projects: number,
   facilities: number,
   companyId = "",
-  vatId = ""
+  vatId = "",
+  taxId = "",
+  notes = ""
 ): Company => ({
-  id, name, type, companyId, taxId: "", vatId, address, website: "", notes: "", people, projects, facilities,
+  id, name, type, companyId, taxId, vatId, address, website: "", notes, people, projects, facilities,
 });
 
 const INITIAL_COMPANIES: Company[] = [
-  company(1, "Staffmate s. r. o.", "Staffmate", "Kúpeľná 2247/2, 927 01 Šaľa", 2, 0, 0, "56887744", "SK2122484936"),
+  company(1, "Staffmate s. r. o.", "Staffmate", "Kúpeľná 2247/2, 927 01 Šaľa", 2, 0, 0, "56887744", "SK2122484936", "2122484936", "Own company."),
   company(2, "Bosch Automotive s.r.o.", "Client / Factory", "Priemyselná 12, 917 01 Trnava", 1, 1, 0),
   company(3, "Kia Motors Slovakia", "Client / Factory", "Sv. Cyrila a Metoda 1, 010 01 Žilina", 1, 1, 0),
   company(4, "DHL Logistics SK", "Client / Factory", "Diaľničná 5, 903 01 Bratislava", 0, 1, 0),
@@ -128,12 +134,21 @@ const EMPTY_COMPANY: CompanyForm = {
   name: "", type: "Client / Factory", companyId: "", taxId: "", vatId: "", address: "", website: "", notes: "",
 };
 
+/** Where a contact's "Linked" item opens: projects for clients, facilities for accommodation. */
+const linkedPath = (c: { category: PersonCategory; linked: string | null }): string | null => {
+  if (!c.linked) return null;
+  if (c.category === "Clients & Factories") return `/admin/projects?detail=${encodeURIComponent(c.linked)}`;
+  if (c.category === "Accommodation") return `/admin/accommodation?facility=${encodeURIComponent(c.linked)}`;
+  return null;
+};
+
 const typeClass = (t: CompanyType) =>
   t === "Client / Factory" ? "t-client" : t === "Accommodation partner" ? "t-accom" : t === "Staffmate" ? "t-staff" : "t-other";
 
 /* ---------- Page ---------- */
 
 export default function ContactsPage(): React.JSX.Element {
+  const navigate = useNavigate();
   const [view, setView] = useState<View>("people");
 
   /* people */
@@ -151,12 +166,16 @@ export default function ContactsPage(): React.JSX.Element {
   const [companyQuery, setCompanyQuery] = useState("");
   const [companyModal, setCompanyModal] = useState(false);
   const [companyForm, setCompanyForm] = useState<CompanyForm>(EMPTY_COMPANY);
+  const [detailCompanyId, setDetailCompanyId] = useState<number | null>(null);
+  const [editingCompanyId, setEditingCompanyId] = useState<number | null>(null);
 
-  const modalOpen = contactModal !== null || companyModal;
+  const modalOpen = contactModal !== null || companyModal || detailCompanyId !== null;
 
   const closeModals = () => {
     setContactModal(null);
     setCompanyModal(false);
+    setDetailCompanyId(null);
+    setEditingCompanyId(null);
     setSelectedContactId(null);
     setContactForm(EMPTY_CONTACT);
     setCompanyForm(EMPTY_COMPANY);
@@ -201,6 +220,7 @@ export default function ContactsPage(): React.JSX.Element {
   };
 
   const openEditContact = (c: Contact) => {
+    setDetailCompanyId(null);
     setSelectedContactId(c.id);
     setContactForm({
       name: c.name, role: c.role, organisation: c.organisation, category: c.category,
@@ -252,31 +272,61 @@ export default function ContactsPage(): React.JSX.Element {
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => setCompanyForm((p) => ({ ...p, [e.target.name]: e.target.value }));
 
+  const detailCompany = companies.find((c) => c.id === detailCompanyId) ?? null;
+  const detailPeople = detailCompany
+    ? contacts.filter((c) => c.organisation === detailCompany.name)
+    : [];
+
+  const findCompanyByName = (name: string) =>
+    name ? companies.find((c) => c.name === name) ?? null : null;
+
   const openAddCompany = () => {
+    setEditingCompanyId(null);
     setCompanyForm(EMPTY_COMPANY);
+    setCompanyModal(true);
+  };
+
+  const openEditCompany = (c: Company) => {
+    setCompanyForm({
+      name: c.name, type: c.type, companyId: c.companyId, taxId: c.taxId,
+      vatId: c.vatId, address: c.address, website: c.website, notes: c.notes,
+    });
+    setEditingCompanyId(c.id);
+    setDetailCompanyId(null);
     setCompanyModal(true);
   };
 
   const saveCompany = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const f = companyForm;
-    setCompanies((prev) => [
-      ...prev,
-      {
-        id: Math.max(0, ...prev.map((c) => c.id)) + 1,
-        name: f.name.trim(), type: f.type, companyId: f.companyId.trim(), taxId: f.taxId.trim(),
-        vatId: f.vatId.trim(), address: f.address.trim(), website: f.website.trim(), notes: f.notes.trim(),
-        people: 0, projects: 0, facilities: 0,
-      },
-    ]);
-    setCompanyTab("All");
-    setCompanyQuery("");
+    const values = {
+      name: f.name.trim(), type: f.type, companyId: f.companyId.trim(), taxId: f.taxId.trim(),
+      vatId: f.vatId.trim(), address: f.address.trim(), website: f.website.trim(), notes: f.notes.trim(),
+    };
+    if (editingCompanyId !== null) {
+      setCompanies((prev) => prev.map((c) => (c.id === editingCompanyId ? { ...c, ...values } : c)));
+    } else {
+      setCompanies((prev) => [
+        ...prev,
+        { id: Math.max(0, ...prev.map((c) => c.id)) + 1, ...values, people: 0, projects: 0, facilities: 0 },
+      ]);
+      setCompanyTab("All");
+      setCompanyQuery("");
+    }
     closeModals();
   };
 
   const onOverlayDown = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.target === e.currentTarget) closeModals();
   };
+
+  const orgOptions = useMemo(() => {
+    const names = companies.map((c) => c.name).filter(Boolean);
+    if (contactForm.organisation && !names.includes(contactForm.organisation)) {
+      names.push(contactForm.organisation);
+    }
+    return names;
+  }, [companies, contactForm.organisation]);
 
   const dash = (v: string) => (v ? v : "—");
 
@@ -380,11 +430,41 @@ export default function ContactsPage(): React.JSX.Element {
                       </button>
                     </td>
                     <td>{dash(c.role)}</td>
-                    <td><strong>{dash(c.organisation)}</strong></td>
+                    <td>
+                      {findCompanyByName(c.organisation) ? (
+                        <button
+                          type="button"
+                          className="ct-name-button"
+                          onClick={() => setDetailCompanyId(findCompanyByName(c.organisation)!.id)}
+                          aria-label={`View company ${c.organisation}`}
+                        >
+                          {c.organisation}
+                        </button>
+                      ) : (
+                        <strong>{dash(c.organisation)}</strong>
+                      )}
+                    </td>
                     <td>{c.category}</td>
                     <td>{dash(c.phone)}</td>
                     <td>{dash(c.email)}</td>
-                    <td>{c.linked ? <strong>{c.linked}</strong> : "—"}</td>
+                    <td>
+                      {c.linked ? (
+                        linkedPath(c) ? (
+                          <button
+                            type="button"
+                            className="ct-name-button"
+                            onClick={() => navigate(linkedPath(c)!)}
+                            aria-label={`Open ${c.linked}`}
+                          >
+                            {c.linked}
+                          </button>
+                        ) : (
+                          <strong>{c.linked}</strong>
+                        )
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                     <td>
                       <button
                         type="button"
@@ -432,7 +512,16 @@ export default function ContactsPage(): React.JSX.Element {
               <tbody>
                 {companyRows.map((c) => (
                   <tr key={c.id}>
-                    <td><strong className="ct-company-name">{dash(c.name)}</strong></td>
+                    <td>
+                      <button
+                        type="button"
+                        className="ct-name-button ct-company-name"
+                        onClick={() => setDetailCompanyId(c.id)}
+                        aria-label={`View company ${c.name || "details"}`}
+                      >
+                        {dash(c.name)}
+                      </button>
+                    </td>
                     <td><span className={`ct-type ${typeClass(c.type)}`}>{c.type}</span></td>
                     <td>{dash(c.companyId)}</td>
                     <td>{dash(c.vatId)}</td>
@@ -451,12 +540,73 @@ export default function ContactsPage(): React.JSX.Element {
         </section>
       )}
 
-      {/* ADD COMPANY MODAL */}
+      {/* COMPANY DETAIL MODAL */}
+      {detailCompany && (
+        <div className="ct-modal-overlay" onMouseDown={onOverlayDown}>
+          <div className="ct-modal ct-modal-detail" role="dialog" aria-modal="true" aria-labelledby="ct-detail-title">
+            <div className="ct-modal-header">
+              <h2 id="ct-detail-title">{detailCompany.name || "Unnamed company"}</h2>
+              <button type="button" className="ct-modal-close" onClick={closeModals} aria-label="Close">
+                <X size={18} />
+              </button>
+            </div>
+
+            <dl className="ct-detail-grid">
+              <dt>Type</dt>
+              <dd><span className={`ct-type ${typeClass(detailCompany.type)}`}>{detailCompany.type}</span></dd>
+              <dt>Company ID</dt><dd>{dash(detailCompany.companyId)}</dd>
+              <dt>Tax ID</dt><dd>{dash(detailCompany.taxId)}</dd>
+              <dt>VAT ID</dt><dd>{dash(detailCompany.vatId)}</dd>
+              <dt>Registered address</dt><dd>{dash(detailCompany.address)}</dd>
+              <dt>Website</dt><dd>{dash(detailCompany.website)}</dd>
+              <dt>Notes</dt><dd>{dash(detailCompany.notes)}</dd>
+            </dl>
+
+            <h3 className="ct-detail-heading">People ({detailPeople.length})</h3>
+            {detailPeople.length === 0 ? (
+              <p className="ct-detail-empty">No people linked to this company.</p>
+            ) : (
+              <ul className="ct-detail-people">
+                {detailPeople.map((p) => (
+                  <li key={p.id}>
+                    <button
+                      type="button"
+                      className="ct-detail-person"
+                      onClick={() => openEditContact(p)}
+                      aria-label={`Edit contact ${p.name}`}
+                    >
+                      <strong>{p.name}</strong>
+                      <small>{[p.role, p.phone, p.email].filter(Boolean).join(" · ")}</small>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div className="ct-modal-actions">
+              <button type="button" className="ct-outline-btn" onClick={() => openEditCompany(detailCompany)}>
+                Edit company
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ADD / EDIT COMPANY MODAL */}
       {companyModal && (
         <div className="ct-modal-overlay" onMouseDown={onOverlayDown}>
-          <div className="ct-modal" role="dialog" aria-modal="true" aria-labelledby="ct-company-title">
+          <div
+            className={`ct-modal${editingCompanyId !== null ? " ct-modal-edit" : ""}`}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ct-company-title"
+          >
             <div className="ct-modal-header">
-              <h2 id="ct-company-title">Add Company</h2>
+              <h2 id="ct-company-title">
+                {editingCompanyId !== null
+                  ? companies.find((c) => c.id === editingCompanyId)?.name || "Edit company"
+                  : "Add Company"}
+              </h2>
               <button type="button" className="ct-modal-close" onClick={closeModals} aria-label="Close">
                 <X size={18} />
               </button>
@@ -522,10 +672,17 @@ export default function ContactsPage(): React.JSX.Element {
       {/* ADD / EDIT CONTACT MODAL */}
       {contactModal && (
         <div className="ct-modal-overlay" onMouseDown={onOverlayDown}>
-          <div className="ct-modal" role="dialog" aria-modal="true" aria-labelledby="ct-contact-title">
+          <div
+            className={`ct-modal${contactModal === "edit" ? " ct-modal-edit ct-modal-contact" : ""}`}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ct-contact-title"
+          >
             <div className="ct-modal-header">
               <h2 id="ct-contact-title">
-                {contactModal === "add" ? "Add Contact" : contactForm.name || "Edit Contact"}
+                {contactModal === "add"
+                  ? "Add Contact"
+                  : contacts.find((c) => c.id === selectedContactId)?.name || "Edit Contact"}
               </h2>
               <button type="button" className="ct-modal-close" onClick={closeModals} aria-label="Close">
                 <X size={18} />
@@ -535,7 +692,7 @@ export default function ContactsPage(): React.JSX.Element {
             <form onSubmit={contactModal === "add" ? saveNewContact : saveEditedContact}>
               <div className="ct-form-grid">
                 <div className="ct-field">
-                  <label htmlFor="ctc-name">Name <span>*</span></label>
+                  <label htmlFor="ctc-name">Name{contactModal === "add" && <> <span>*</span></>}</label>
                   <input id="ctc-name" name="name" value={contactForm.name} onChange={onContactChange} required />
                 </div>
 
@@ -546,22 +703,27 @@ export default function ContactsPage(): React.JSX.Element {
 
                 <div className="ct-field">
                   <label htmlFor="ctc-org">Organisation</label>
-                  <input id="ctc-org" name="organisation" value={contactForm.organisation} onChange={onContactChange} />
-                </div>
-
-                <div className="ct-field">
-                  <label htmlFor="ctc-cat">Category</label>
-                  <select id="ctc-cat" name="category" value={contactForm.category} onChange={onContactChange}>
-                    {PEOPLE_TABS.slice(1).map((c) => <option key={c} value={c}>{c}</option>)}
+                  <select id="ctc-org" name="organisation" value={contactForm.organisation} onChange={onContactChange}>
+                    <option value="">No organisation</option>
+                    {orgOptions.map((n) => <option key={n} value={n}>{n}</option>)}
                   </select>
                 </div>
 
+                {contactModal === "add" && (
+                  <div className="ct-field">
+                    <label htmlFor="ctc-cat">Category</label>
+                    <select id="ctc-cat" name="category" value={contactForm.category} onChange={onContactChange}>
+                      {PEOPLE_TABS.slice(1).map((c) => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+                )}
+
                 <div className="ct-field">
-                  <label htmlFor="ctc-phone">Telephone</label>
+                  <label htmlFor="ctc-phone">{contactModal === "add" ? "Telephone" : "Phone"}</label>
                   <input id="ctc-phone" name="phone" type="tel" value={contactForm.phone} onChange={onContactChange} />
                 </div>
 
-                <div className="ct-field">
+                <div className={`ct-field${contactModal === "edit" ? " ct-full" : ""}`}>
                   <label htmlFor="ctc-email">Email</label>
                   <input id="ctc-email" name="email" type="email" value={contactForm.email} onChange={onContactChange} />
                 </div>
@@ -619,7 +781,7 @@ const css = `
 /* panel + toolbar */
 .ct-panel{padding:0 0 10px;margin-bottom:16px}
 .ct-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:26px 26px 12px}
-.ct-search{display:flex;align-items:center;gap:10px;height:46px;padding:0 14px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--muted);max-width:100%}
+.ct-search{display:flex;align-items:center;gap:10px;height:40px;padding:0 14px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--muted);max-width:100%}
 .ct-search-people{width:320px}
 .ct-search-company{width:460px}
 .ct-search input{flex:1;min-width:0;border:0;background:transparent;outline:none;font-size:var(--fs-base);color:var(--text)}
@@ -631,10 +793,10 @@ const css = `
 .ct-table{min-width:1000px}
 .ct-table th{font-size:var(--fs-sm);font-weight:500;color:var(--muted);padding:16px 16px 14px;white-space:nowrap;text-align:left}
 .ct-table td{padding:13px 16px;font-size:var(--fs-base);white-space:nowrap;color:var(--text);border-top:1px solid var(--line)}
-.ct-table td strong{font-weight:700}
+.ct-table td strong{font-weight:600}
 .ct-table tbody tr{transition:background-color .15s ease}
 .ct-table tbody tr:hover{background-color:var(--hover-soft)}
-.ct-company-name{font-weight:700}
+.sm-app .ct-company-name{font-weight:700}
 .ct-none{padding:30px 26px!important;color:var(--muted)!important}
 
 /* People table: column widths matched to the design (Name … Important) */
@@ -648,7 +810,7 @@ const css = `
 .ct-table-people th:nth-child(7){width:7%}
 .ct-table-people th:nth-child(8){width:9.5%}
 
-.sm-app .ct-name-button{border:0;padding:0;background:transparent;color:var(--text);font:inherit;font-weight:700;text-align:left;cursor:pointer;transition:color .15s ease}
+.sm-app .ct-name-button{border:0;padding:0;background:transparent;color:var(--text);font:inherit;font-weight:600;text-align:left;cursor:pointer;transition:color .15s ease}
 .sm-app .ct-name-button:hover{color:var(--green)}
 
 .sm-app .ct-star{display:inline-grid;place-items:center;min-width:22px;border:0;background:transparent;color:var(--muted);cursor:pointer;transition:transform .15s ease,color .15s ease}
@@ -670,9 +832,9 @@ html[data-theme="dark"] .ct-type.t-other::before{background:#e8b04a}
 
 /* modal */
 .ct-modal-overlay{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;background:var(--overlay);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px)}
-.ct-modal{width:100%;max-width:450px;max-height:calc(100vh - 40px);overflow-y:auto;box-sizing:border-box;padding:14px 18px 16px;background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow)}
+.ct-modal{width:100%;max-width:600px;max-height:calc(100vh - 40px);overflow-y:auto;box-sizing:border-box;padding:14px 18px 16px;background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow)}
 .ct-modal-header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}
-.ct-modal-header h2{margin:0;font-size:16px;font-weight:700;line-height:1.3;color:var(--text)}
+.ct-modal-header h2{margin:0;font-size:18px;font-weight:600;line-height:1.3;color:var(--text)}
 .sm-app .ct-modal-close{display:flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--muted);cursor:pointer}
 .sm-app .ct-modal-close:hover{background:var(--hover);color:var(--text)}
 
@@ -692,9 +854,64 @@ html[data-theme="dark"] .ct-type.t-other::before{background:#e8b04a}
 .ct-important-option input{width:18px;height:18px;margin:0;accent-color:var(--green)}
 
 .ct-modal-actions{display:flex;justify-content:flex-start;margin-top:10px}
-.sm-app .ct-save-btn{display:inline-flex;align-items:center;justify-content:center;height:34px;padding:0 15px;border:0;border-radius:7px;background:var(--green);color:var(--on-green);font:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:filter .15s}
+.sm-app .ct-save-btn{display:inline-flex;align-items:center;justify-content:center;height:34px;padding:0 15px;border:0;border-radius:7px;background:var(--green);color: var(--on-green);font:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:filter .15s}
 .sm-app .ct-save-btn:hover{filter:brightness(1.1)}
 .sm-app .ct-save-btn:active{filter:brightness(.92)}
+
+/* company detail modal */
+.ct-modal.ct-modal-detail{max-width:520px;padding:20px 22px 18px}
+.ct-modal-detail .ct-modal-header{margin-bottom:14px}
+.ct-modal-detail .ct-modal-header h2{font-size:16px}
+.ct-detail-grid{display:grid;grid-template-columns:140px minmax(0,1fr);row-gap:8px;margin:0 0 16px;font-size:13px}
+.ct-detail-grid dt{color:var(--muted)}
+.ct-detail-grid dd{margin:0;color:var(--text);word-break:break-word}
+.ct-detail-heading{margin:0 0 4px;font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.ct-detail-empty{margin:0 0 6px;font-size:12px;color:var(--muted)}
+.ct-detail-people{list-style:none;margin:0;padding:0}
+.ct-detail-people li{display:flex;flex-direction:column;gap:2px;padding:8px 0;border-bottom:1px solid var(--line)}
+.ct-detail-people li strong{font-size:13px;font-weight:600}
+.ct-detail-people li small{font-size:12px;color:var(--muted)}
+.ct-modal-detail .ct-modal-actions{margin-top:14px}
+.ct-detail-people li{padding:0}
+.sm-app .ct-detail-person{display:flex;flex-direction:column;gap:2px;width:100%;padding:8px 6px;border:0;border-radius:8px;background:transparent;color:var(--text);font:inherit;text-align:left;cursor:pointer;transition:background-color .15s ease}
+.sm-app .ct-detail-person:hover{background:var(--hover-soft)}
+.sm-app .ct-detail-person:hover strong{color:var(--green)}
+.sm-app .ct-detail-person:focus-visible{outline:2px solid var(--green);outline-offset:-2px}
+.sm-app .ct-outline-btn{display:inline-flex;align-items:center;justify-content:center;height:34px;padding:0 14px;border:1px solid var(--line);border-radius:7px;background:var(--card);color:var(--text);font:inherit;font-size:13px;font-weight:500;cursor:pointer;transition:background-color .15s}
+.sm-app .ct-outline-btn:hover{background:var(--hover-soft)}
+
+/* edit company modal */
+.ct-modal.ct-modal-edit{max-width:520px;padding:20px 24px 18px}
+.ct-modal-edit .ct-modal-header{margin-bottom:14px}
+.ct-modal-edit .ct-modal-header h2{font-size:16px}
+.ct-modal-edit .ct-form-grid{column-gap:14px;row-gap:12px}
+.ct-modal-edit .ct-field{gap:5px}
+.ct-modal-edit .ct-field label{font-size:13px;font-weight:400;color:var(--muted)}
+.ct-modal-edit .ct-field input,
+.ct-modal-edit .ct-field select{height:36px;padding:0 12px;font-size:13px;border-radius:7px}
+.ct-modal-edit .ct-field select{padding-right:34px}
+.ct-modal-edit .ct-field textarea{min-height:60px;padding:8px 12px;font-size:13px;border-radius:7px}
+.ct-modal-edit .ct-hint{margin-top:12px;font-size:12px}
+.ct-modal-edit .ct-modal-actions{margin-top:12px}
+.ct-modal-edit .ct-important-option{margin-top:12px;gap:8px;font-size:13px}
+.ct-modal-edit .ct-important-option input{width:16px;height:16px}
+.sm-app .ct-modal-edit .ct-save-btn{height:36px;padding:0 14px;font-size:13px;border-radius:7px}
+
+/* edit contact modal (compact) */
+.ct-modal.ct-modal-edit.ct-modal-contact{max-width:520px;padding:20px 24px 18px}
+.ct-modal-contact .ct-modal-header{margin-bottom:14px}
+.ct-modal-contact .ct-modal-header h2{font-size:16px}
+.ct-modal-contact .ct-form-grid{column-gap:14px;row-gap:12px}
+.ct-modal-contact .ct-field{gap:5px}
+.ct-modal-contact .ct-field label{font-size:13px}
+.ct-modal-contact .ct-field input,
+.ct-modal-contact .ct-field select{height:36px;padding:0 12px;font-size:13px;border-radius:7px}
+.ct-modal-contact .ct-field select{padding-right:34px}
+.ct-modal-contact .ct-field textarea{min-height:60px;padding:8px 12px;font-size:13px;border-radius:7px}
+.ct-modal-contact .ct-important-option{margin-top:12px;gap:8px;font-size:13px}
+.ct-modal-contact .ct-important-option input{width:16px;height:16px}
+.ct-modal-contact .ct-modal-actions{margin-top:12px}
+.sm-app .ct-modal-contact .ct-save-btn{height:36px;padding:0 14px;font-size:13px;border-radius:7px}
 
 @media (max-width:600px){
   .ct-toolbar{flex-direction:column;align-items:flex-start;padding:18px 16px 10px}
@@ -702,5 +919,11 @@ html[data-theme="dark"] .ct-type.t-other::before{background:#e8b04a}
   .ct-modal{padding:14px 14px 16px}
   .ct-form-grid{grid-template-columns:1fr}
   .ct-full{grid-column:auto}
+  .ct-detail-grid{grid-template-columns:1fr;row-gap:4px}
+  .ct-detail-grid dd{margin-bottom:10px}
+  .ct-modal.ct-modal-detail{padding:16px 16px}
+  .ct-modal.ct-modal-edit{padding:16px 16px}
+  .ct-modal-edit .ct-form-grid{row-gap:14px}
+  .ct-modal.ct-modal-edit.ct-modal-contact{padding:16px 16px}
 }
 `;

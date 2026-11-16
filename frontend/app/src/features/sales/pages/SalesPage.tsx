@@ -18,6 +18,7 @@ interface Opportunity {
   deadline: string | null;
   wonOn?: string;
   notes?: string;
+  projectCreated?: boolean;
 }
 
 interface OpportunityForm {
@@ -31,7 +32,16 @@ interface OpportunityForm {
   deadline: string;
 }
 
+interface ProjectForm {
+  name: string;
+  location: string;
+  coordinator: string;
+  startDate: string;
+}
+
 const AS_OF = "2026-09-09";
+
+const COORDINATORS = ["Jana Kollárová", "Peter Vrábel"];
 
 const MONTHS = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -112,6 +122,13 @@ const initialForm: OpportunityForm = {
   deadline: "",
 };
 
+const emptyProjectForm: ProjectForm = {
+  name: "",
+  location: "",
+  coordinator: COORDINATORS[0],
+  startDate: AS_OF,
+};
+
 /* ---------- Sales Page ---------- */
 
 export default function SalesPage(): React.JSX.Element {
@@ -127,6 +144,11 @@ export default function SalesPage(): React.JSX.Element {
     useState<OpportunityForm>(initialForm);
 
   const [notes, setNotes] = useState("");
+
+  // "Create Project" dialog (opened from a Won opportunity)
+  const [projectFor, setProjectFor] = useState<Opportunity | null>(null);
+  const [projectForm, setProjectForm] = useState<ProjectForm>(emptyProjectForm);
+  const [notice, setNotice] = useState<string | null>(null);
 
   /* ---------- Statistics ---------- */
 
@@ -160,6 +182,7 @@ export default function SalesPage(): React.JSX.Element {
       if (event.key === "Escape") {
         setShowModal(false);
         setSelectedOpportunity(null);
+        setProjectFor(null);
         setForm(initialForm);
       }
     };
@@ -199,6 +222,44 @@ export default function SalesPage(): React.JSX.Element {
   const closeDetails = () => {
     setSelectedOpportunity(null);
     setNotes("");
+  };
+
+  /* ---------- Create Project ---------- */
+
+  const openCreateProject = (o: Opportunity) => {
+    setProjectForm({
+      name: o.name,
+      location: o.location,
+      coordinator: COORDINATORS.includes(o.owner) ? o.owner : COORDINATORS[0],
+      startDate: AS_OF,
+    });
+    setProjectFor(o);
+  };
+
+  const closeCreateProject = () => setProjectFor(null);
+
+  const handleProjectChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
+  ) => {
+    const { name, value } = e.target;
+    setProjectForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleCreateProject = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!projectFor) return;
+    if (!projectForm.name.trim() || !projectForm.coordinator || !projectForm.startDate) return;
+
+    const created = projectForm.name.trim();
+    setOpportunities((prev) =>
+      prev.map((o) =>
+        o.id === projectFor.id
+          ? { ...o, projectCreated: true, nextAction: "Project created" }
+          : o
+      )
+    );
+    setNotice(`Project "${created}" created from the opportunity — start ${fmt(projectForm.startDate)}, coordinator ${projectForm.coordinator}.`);
+    setProjectFor(null);
   };
 
   /* ---------- Save Notes ---------- */
@@ -290,6 +351,18 @@ export default function SalesPage(): React.JSX.Element {
         </button>
       </div>
 
+      {notice && (
+        <div className="sl-notice" role="status">
+          <span>
+            {notice}{" "}
+            <Link to="/admin/projects" className="sl-notice-link">Open Projects</Link>
+          </span>
+          <button type="button" aria-label="Dismiss" onClick={() => setNotice(null)}>
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
       {/* Statistics */}
 
       <section
@@ -363,14 +436,17 @@ export default function SalesPage(): React.JSX.Element {
                     <span className="sl-next">
                       {o.nextAction || "—"}
 
-                      {o.stage === "Won" && (
-                        <Link
-                          to="/admin/projects"
-                          className="sm-link"
-                          onClick={(e) => e.stopPropagation()}
+                      {o.stage === "Won" && !o.projectCreated && (
+                        <button
+                          type="button"
+                          className="sm-link sl-link-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openCreateProject(o);
+                          }}
                         >
                           Create Project
-                        </Link>
+                        </button>
                       )}
                     </span>
                   </td>
@@ -550,6 +626,118 @@ export default function SalesPage(): React.JSX.Element {
         </div>
       )}
 
+      {/* ---------- Create Project Modal ---------- */}
+
+      {projectFor && (
+        <div
+          className="sl-modal-overlay"
+          onClick={closeCreateProject}
+        >
+          <div
+            className="sl-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="sl-project-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="sl-modal-header">
+              <h2 id="sl-project-title">
+                New Project — {projectFor.name}
+              </h2>
+
+              <button
+                type="button"
+                className="sl-modal-close"
+                onClick={closeCreateProject}
+                aria-label="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateProject}>
+              <div className="sl-form-grid">
+
+                <div className="sl-field full-width">
+                  <label htmlFor="sl-pj-name">
+                    Project / Factory Name <span>*</span>
+                  </label>
+
+                  <input
+                    id="sl-pj-name"
+                    type="text"
+                    name="name"
+                    value={projectForm.name}
+                    onChange={handleProjectChange}
+                    required
+                  />
+                </div>
+
+                <div className="sl-field">
+                  <label htmlFor="sl-pj-location">Location</label>
+
+                  <input
+                    id="sl-pj-location"
+                    type="text"
+                    name="location"
+                    value={projectForm.location}
+                    onChange={handleProjectChange}
+                  />
+                </div>
+
+                <div className="sl-field">
+                  <label htmlFor="sl-pj-coordinator">
+                    Coordinator <span>*</span>
+                  </label>
+
+                  <select
+                    id="sl-pj-coordinator"
+                    name="coordinator"
+                    value={projectForm.coordinator}
+                    onChange={handleProjectChange}
+                    required
+                  >
+                    {COORDINATORS.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="sl-field">
+                  <label htmlFor="sl-pj-start">
+                    Engagement Start <span>*</span>
+                  </label>
+
+                  <input
+                    id="sl-pj-start"
+                    type="date"
+                    name="startDate"
+                    value={projectForm.startDate}
+                    onChange={handleProjectChange}
+                    required
+                  />
+                </div>
+
+              </div>
+
+              <p className="sl-hint">
+                Required project information must be completed here before the project activates — changing an
+                opportunity's stage alone does not create active assignments.
+              </p>
+
+              <div className="sl-modal-actions">
+                <button
+                  type="submit"
+                  className="sl-save-btn"
+                >
+                  Create Project
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* ---------- Opportunity Details Modal ---------- */}
 
       {selectedOpportunity && (
@@ -699,6 +887,42 @@ const css = `
   line-height: 1.45;
 }
 
+/* Notice after creating a project */
+
+.sl-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 14px;
+  margin-bottom: 12px;
+  border-radius: 10px;
+  background: var(--green-soft);
+  color: var(--green);
+  font-size: 13.5px;
+}
+
+.sl-notice-link {
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.sl-notice button {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--green);
+  cursor: pointer;
+}
+
+.sl-notice button:hover {
+  background: var(--hover);
+}
+
 /* Statistics */
 
 .sl-stat {
@@ -791,7 +1015,48 @@ const css = `
   font-weight: 600;
   font-size: 13px;
 }
+  
 
+/* "Create Project" is a button that looks like a link */
+.sl-link-btn {
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.sl-link-btn:hover {
+   background: #d8dde4;
+   border-radius: 6px;
+}
+
+.sl-table .sl-next .sl-link-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  height: 32px;
+  padding: 0 13px;
+
+  border: none !important;
+  border-radius: 8px;
+
+  
+  color: #15803d !important;
+
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+
+  white-space: nowrap;
+  cursor: pointer;
+
+  transition: background-color 0.2s ease;
+}
+.sl-table .sl-next .sl-link-btn:hover{
+background: #dee4de !important;
+}
 /* ---------- Modal Overlay ---------- */
 
 .sl-modal-overlay {
@@ -874,8 +1139,8 @@ const css = `
 
 .sl-modal-header h2 {
   margin: 0;
-  font-size: 17px;
-  font-weight: 650;
+  font-size: 18px;
+  font-weight: 600;
   color: #202722;
 }
 
@@ -891,9 +1156,9 @@ const css = `
 
 .sl-details-header h2 {
   margin: 0;
-  font-size: 17px;
+  font-size: 16px;
   line-height: 1.35;
-  font-weight: 650;
+  font-weight: 600;
   color: #202722;
 }
 
@@ -960,7 +1225,7 @@ const css = `
 .sl-field input,
 .sl-field select {
   width: 100%;
-  height: 34px;
+  height: 36px;
 
   box-sizing: border-box;
   padding: 0 10px;
@@ -972,7 +1237,7 @@ const css = `
   color: #252b27;
 
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: 14px;
 
   outline: none;
 
@@ -991,6 +1256,15 @@ const css = `
 
 .sl-field select {
   cursor: pointer;
+}
+
+/* Helper text under the Create Project form */
+
+.sl-hint {
+  margin: 12px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #606b64;
 }
 
 /* Add Modal Save Button (brighter green) */
@@ -1014,7 +1288,7 @@ const css = `
   color: #ffffff;
 
   font-family: inherit;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 600;
 
   cursor: pointer;
@@ -1036,7 +1310,7 @@ const css = `
   color: #ffffff !important;
   border: none !important;
   border-radius: 9px;
-  height: 34px;
+  height: 32px;
 }
 
 .sl-modal .sl-modal-actions button.sl-save-btn:hover {

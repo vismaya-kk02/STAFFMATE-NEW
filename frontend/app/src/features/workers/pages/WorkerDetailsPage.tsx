@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
-  ChevronDown, ChevronRight, Download, Search, SlidersHorizontal, UserPlus, AlignJustify, Menu, X,
+  ChevronDown, ChevronRight, Download, Search, SlidersHorizontal, AlignJustify, Menu, X,
   UserX, Pencil, Check, Plus, ArrowRightLeft, CalendarX2, LogIn, FileText, CloudUpload, BadgeCheck,
   Ban, TrendingUp, ClipboardList,
 } from "lucide-react";
@@ -479,9 +479,29 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
           {subtitle && <p>{subtitle}</p>}
         </div>
         <div className="wd-head-btns">
-          <button type="button" className="sm-btn sm-btn-outline" onClick={() => setTermOpen(true)}><UserX size={16} /> Begin termination</button>
-          <button type="button" className="sm-btn sm-btn-outline" onClick={() => setEditOpen(true)}><Pencil size={16} /> Edit Profile</button>
-        </div>
+  <button type="button" className="sm-btn sm-btn-outline" onClick={() => setTermOpen(true)}>
+    <img
+      src="/images/termination.svg"
+      alt=""
+      aria-hidden="true"
+      width={16}
+      height={16}
+      style={{ display: "block", flex: "none" }}
+    />{" "}
+    Begin termination
+  </button>
+  <button type="button" className="sm-btn sm-btn-outline" onClick={() => setEditOpen(true)}>
+    <img
+      src="/images/edit.svg"
+      alt=""
+      aria-hidden="true"
+      width={16}
+      height={16}
+      style={{ display: "block", flex: "none" }}
+    />{" "}
+    Edit Profile
+  </button>
+</div>
       </section>
 
       <section className="sm-card wd-sum">
@@ -532,14 +552,21 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
           ["Employment start", d.empStart],
         ])}
         {hint && (
-          <div className="wd-pending">
-            <ClipboardList size={16} />
-            <span>
-              <b>Pending action: {pendingLabel(worker)}</b> — {hint}
-              {pendingDays !== null ? ` Since ${d.empStart} · ${pendingDays} days.` : ""}
-            </span>
-          </div>
-        )}
+  <div className="wd-pending">
+    <img
+      src="/images/pending_actions.svg"
+      alt=""
+      aria-hidden="true"
+      width={16}
+      height={16}
+      style={{ display: "block", flex: "none" }}
+    />
+    <span>
+      <b>Pending action: {pendingLabel(worker)}</b> — {hint}
+      {pendingDays !== null ? ` Since ${d.empStart} · ${pendingDays} days.` : ""}
+    </span>
+  </div>
+)}
       </section>
 
       <div className="wd-tabs" role="tablist">
@@ -889,7 +916,8 @@ export default function WorkersPage(): React.JSX.Element {
           </p>
         </div>
         <button type="button" className="sm-btn sm-btn-primary" onClick={() => setAddOpen(true)}>
-          <UserPlus size={16} /> Add Worker
+          <img src="/images/worker_add.svg" alt="" aria-hidden="true" width={16} height={16} style={{ display: "block" }} />{" "}
+          Add Worker
         </button>
       </div>
 

@@ -117,6 +117,9 @@ const addDays = (iso: string, n: number) => {
 const fmtDate = (iso: string) =>
   parseIso(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 
+/** Opens the Accommodation page directly on one facility's detail page (AccommodationPage reads ?facility=<name>). */
+const facilityLink = (name: string) => `/admin/accommodation?facility=${encodeURIComponent(name)}`;
+
 const freshMarks = (list: DayWorker[] = DAY_WORKERS): Record<string, Mark> =>
   Object.fromEntries(list.map((w) => [w.id, { didNotWork: false, reason: DEFAULT_REASON, note: "" }]));
 
@@ -1184,13 +1187,150 @@ const modalCss = `
 .ap-select select{appearance:none;-webkit-appearance:none;padding-right:36px;cursor:pointer}
 .ap-select svg{position:absolute;right:11px;top:50%;transform:translateY(-50%);width:15px;height:15px;pointer-events:none;color:var(--text,#1c1c1a)}
 .ap-hint{margin:18px 0 14px;font-size:13px;color:var(--muted,#6b6b66)}
-.ap-save{height:38px;padding:0 16px;border-radius:6px;background:var(--green,#1a6b2f);color:#fff;font-size:13.5px;font-weight:600;cursor:pointer}
+.ap-save{height:38px;padding:0 16px;border-radius:6px;background:var(--green,#1a6b2f);color:#fff;font-size:13.5px;font-weight:600;cursor:pointer;border:none}
 .ap-save:hover{filter:brightness(1.08)}
 .ap-save:focus-visible,.ap-close:focus-visible{outline:2px solid var(--green,#1a6b2f);outline-offset:2px}
 @media (max-width:640px){
   .ap-modal{padding:22px 18px}
   .ap-grid{grid-template-columns:1fr}
 }
+`;
+
+/* ---------- Add Requirement modal ---------- */
+interface NewRequirementInput {
+  role: string;
+  requested: number;
+  from: string; // ISO yyyy-mm-dd, or "" when not set
+  responsible: string;
+  notes: string;
+}
+
+function AddRequirementModal({ coordinators, defaultResponsible, onClose, onSave }: {
+  coordinators: string[];
+  defaultResponsible: string;
+  onClose: () => void;
+  onSave: (r: NewRequirementInput) => void;
+}): React.JSX.Element {
+  const [role, setRole] = useState("");
+  const [requested, setRequested] = useState("1");
+  const [from, setFrom] = useState("");
+  const [responsible, setResponsible] = useState(defaultResponsible);
+  const [notes, setNotes] = useState("");
+  const [touched, setTouched] = useState(false);
+  const roleRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { setTimeout(() => roleRef.current?.focus(), 0); }, []);
+
+  // Close on Escape + lock page scroll while open
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [onClose]);
+
+  const count = parseInt(requested, 10);
+  const roleMissing = touched && !role.trim();
+  const countInvalid = touched && !(count >= 1);
+  const options = coordinators.includes(responsible) ? coordinators : [responsible, ...coordinators];
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setTouched(true);
+    if (!role.trim() || !(count >= 1)) return;
+    onSave({ role: role.trim(), requested: count, from, responsible, notes: notes.trim() });
+  };
+
+  return createPortal(
+    <>
+      <style>{modalCss}{requirementCss}</style>
+      <div className="ap-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+        <form className="ap-modal ar-modal" role="dialog" aria-modal="true" aria-labelledby="ar-title" onSubmit={submit} noValidate>
+          <div className="ap-head">
+            <h2 id="ar-title">Add Requirement</h2>
+            <button type="button" className="ap-close" aria-label="Close" onClick={onClose}>
+              <X size={20} strokeWidth={1.5} />
+            </button>
+          </div>
+
+          <div className="ap-grid">
+            <div className="ap-field">
+              <label htmlFor="ar-role">Role *</label>
+              <input
+                id="ar-role"
+                ref={roleRef}
+                className={roleMissing ? "is-error" : ""}
+                placeholder="e.g. Quality Control Inspector"
+                value={role}
+                onChange={(e) => setRole(e.target.value)}
+                aria-invalid={roleMissing}
+              />
+              {roleMissing && <span className="ap-err">Enter a role.</span>}
+            </div>
+
+            <div className="ap-field">
+              <label htmlFor="ar-count">Requested Headcount *</label>
+              <input
+                id="ar-count"
+                type="number"
+                min={1}
+                className={countInvalid ? "is-error" : ""}
+                value={requested}
+                onChange={(e) => setRequested(e.target.value)}
+                aria-invalid={countInvalid}
+              />
+              {countInvalid && <span className="ap-err">Enter at least 1.</span>}
+            </div>
+
+            <div className="ap-field">
+              <label htmlFor="ar-from">Required From</label>
+              <input id="ar-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+            </div>
+
+            <div className="ap-field">
+              <label htmlFor="ar-resp">Responsible</label>
+              <div className="ap-select">
+                <select id="ar-resp" value={responsible} onChange={(e) => setResponsible(e.target.value)}>
+                  {options.map((c) => <option key={c}>{c}</option>)}
+                </select>
+                <ChevronDown size={18} />
+              </div>
+            </div>
+          </div>
+
+          <div className="ap-field ar-notes">
+            <label htmlFor="ar-notes">Notes</label>
+            <textarea id="ar-notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+          </div>
+
+          <button type="submit" className="ap-save">Add Requirement</button>
+        </form>
+      </div>
+    </>,
+    document.body,
+  );
+}
+
+const requirementCss = `
+.ap-modal.ar-modal{max-width:560px;padding:20px 22px 20px;border-radius:14px}
+.ar-modal .ap-head{margin-bottom:16px}
+.ar-modal .ap-head h2{font-size:17px}
+.ar-modal .ap-close{width:24px;height:24px;margin-right:0}
+.ar-modal .ap-close svg{width:18px;height:18px}
+.ar-modal .ap-grid{gap:14px 12px}
+.ar-modal .ap-field{gap:5px}
+.ar-modal .ap-field label{font-size:12.5px}
+.ar-modal .ap-field input,.ar-modal .ap-select select{height:32px;font-size:13px;padding:0 11px}
+.ar-modal .ap-select select{padding-right:32px}
+.ar-modal .ap-select svg{width:14px;height:14px;right:10px}
+.ar-notes{margin-top:14px}
+.ar-modal .ap-field textarea{width:100%;min-height:56px;padding:8px 11px;border:1px solid var(--line,#dedcd5);border-radius:6px;background:#fff;font:inherit;font-size:13px;line-height:1.45;color:var(--text,#1c1c1a);outline:none;resize:vertical;box-sizing:border-box}
+.ar-modal .ap-field textarea:focus{border-color:var(--green,#1a6b2f);box-shadow:0 0 0 3px rgba(26,107,47,.12)}
+.ar-modal .ap-save{margin-top:16px;height:34px;font-size:13px}
 `;
 
 /* ---------- Project detail page ---------- */
@@ -1210,7 +1350,7 @@ interface DetailData {
   current: DetailWorker[];
   planned: DetailWorker[];
   past: DetailWorker[];
-  requirements: { role: string; requested: number; filled: number; from: string; responsible: string; status: string; tone: Tone }[];
+  requirements: { role: string; requested: number; filled: number; from: string; responsible: string; status: string; tone: Tone; notes?: string }[];
   accommodation: { facility: string; location: string; residents: number; availability: string }[];
   documents: { title: string; note: string }[];
   tasks: string[];
@@ -1286,6 +1426,27 @@ function ProjectDetail({ project, id, coordinators, onBack, onStats, onDaily, on
   const [wTab, setWTab] = useState<WorkerTab>("Current");
   const [editOpen, setEditOpen] = useState(false);
 
+  // Workforce requirements: seeded from the project data, then extended by the Add Requirement dialog
+  const [reqs, setReqs] = useState<DetailData["requirements"]>(d.requirements);
+  const [reqOpen, setReqOpen] = useState(false);
+
+  const addRequirement = (r: NewRequirementInput) => {
+    setReqs((list) => [
+      ...list,
+      {
+        role: r.role,
+        requested: r.requested,
+        filled: 0,
+        from: r.from ? fmtDate(r.from) : "—",
+        responsible: r.responsible,
+        status: "Open",
+        tone: "info",
+        notes: r.notes || undefined,
+      },
+    ]);
+    setReqOpen(false);
+  };
+
   const statusTone: Tone = project.status === "Active" ? "ok" : project.status === "In preparation" ? "warn" : "muted";
   const endLabel = project.endDate ? fmtDate(project.endDate) : d.endDate;
   const workerRows = wTab === "Current" ? d.current : wTab === "Planned" ? d.planned : d.past;
@@ -1318,7 +1479,16 @@ function ProjectDetail({ project, id, coordinators, onBack, onStats, onDaily, on
       </nav>
 
       <section className="sm-card pd-head">
-        <div className="pd-icon"><Factory size={26} strokeWidth={1.6} /></div>
+        <div className="pd-icon">
+          <img
+            src="/images/project.svg"
+            alt=""
+            aria-hidden="true"
+            width={56}
+            height={56}
+            style={{ display: "block" }}
+          />
+        </div>
         <div className="pd-main">
           <h1>{project.name}</h1>
           <p className="pd-sub">
@@ -1332,9 +1502,39 @@ function ProjectDetail({ project, id, coordinators, onBack, onStats, onDaily, on
           </div>
         </div>
         <div className="pd-actions">
-          <button type="button" className="sm-btn sm-btn-outline" onClick={onStats}><TrendingUp size={16} /> Statistics</button>
-          <button type="button" className="sm-btn sm-btn-outline" onClick={onDaily}><ClipboardCheck size={16} /> Daily work status</button>
-          <button type="button" className="sm-btn sm-btn-outline" onClick={() => setEditOpen(true)}><Pencil size={16} /> Edit</button>
+          <button type="button" className="sm-btn sm-btn-outline" onClick={onStats}>
+            <img
+              src="/images/statistics.svg"
+              alt=""
+              aria-hidden="true"
+              width={16}
+              height={16}
+              style={{ display: "block", flex: "none" }}
+            />{" "}
+            Statistics
+          </button>
+          <button type="button" className="sm-btn sm-btn-outline" onClick={onDaily}>
+            <img
+              src="/images/status.svg"
+              alt=""
+              aria-hidden="true"
+              width={16}
+              height={16}
+              style={{ display: "block", flex: "none" }}
+            />{" "}
+            Daily work status
+          </button>
+          <button type="button" className="sm-btn sm-btn-outline" onClick={() => setEditOpen(true)}>
+            <img
+              src="/images/edit.svg"
+              alt=""
+              aria-hidden="true"
+              width={16}
+              height={16}
+              style={{ display: "block", flex: "none" }}
+            />{" "}
+            Edit
+          </button>
         </div>
       </section>
 
@@ -1385,7 +1585,15 @@ function ProjectDetail({ project, id, coordinators, onBack, onStats, onDaily, on
                       <td>{w.role}</td>
                       <td>{w.start}</td>
                       <td>{w.end}</td>
-                      <td>{w.accommodation}</td>
+                      <td>
+                        {w.accommodation === NOT_ACC ? (
+                          w.accommodation
+                        ) : (
+                          <Link className="pd-facility" to={facilityLink(w.accommodation)}>
+                            {w.accommodation}
+                          </Link>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1399,9 +1607,11 @@ function ProjectDetail({ project, id, coordinators, onBack, onStats, onDaily, on
         <section className="sm-card pd-panel">
           <div className="pd-panel-head">
             <h3>Workforce Requirements</h3>
-            <button type="button" className="sm-btn sm-btn-outline"><Plus size={16} /> Add Requirement</button>
+            <button type="button" className="sm-btn sm-btn-outline" onClick={() => setReqOpen(true)}>
+              <Plus size={16} /> Add Requirement
+            </button>
           </div>
-          {d.requirements.length === 0 ? (
+          {reqs.length === 0 ? (
             <p className="pd-empty">No requirements added yet.</p>
           ) : (
             <div className="sm-table-wrap">
@@ -1410,8 +1620,8 @@ function ProjectDetail({ project, id, coordinators, onBack, onStats, onDaily, on
                   <tr><th>Role</th><th>Requested</th><th>Filled</th><th>Remaining</th><th>Required From</th><th>Responsible</th><th>Status</th></tr>
                 </thead>
                 <tbody>
-                  {d.requirements.map((r) => (
-                    <tr key={r.role}>
+                  {reqs.map((r, i) => (
+                    <tr key={r.role + i}>
                       <td>{r.role}</td>
                       <td>{r.requested}</td>
                       <td>{r.filled}</td>
@@ -1448,7 +1658,11 @@ function ProjectDetail({ project, id, coordinators, onBack, onStats, onDaily, on
                 <tbody>
                   {d.accommodation.map((a) => (
                     <tr key={a.facility}>
-                      <td><strong>{a.facility}</strong></td>
+                      <td>
+                        <Link className="pd-facility" to={facilityLink(a.facility)}>
+                          {a.facility}
+                        </Link>
+                      </td>
                       <td>{a.location}</td>
                       <td>{a.residents}</td>
                       <td>{a.availability}</td>
@@ -1497,6 +1711,15 @@ function ProjectDetail({ project, id, coordinators, onBack, onStats, onDaily, on
           coordinators={coordinators}
           onClose={() => setEditOpen(false)}
           onSave={(patch) => { onSave(patch); setEditOpen(false); }}
+        />
+      )}
+
+      {reqOpen && (
+        <AddRequirementModal
+          coordinators={coordinators}
+          defaultResponsible={project.coordinator}
+          onClose={() => setReqOpen(false)}
+          onSave={addRequirement}
         />
       )}
     </>
@@ -2109,7 +2332,7 @@ const css = `
 .dw-step{width:32px;height:32px;border-radius:8px}
 
 /* ---- Project detail: theme-aware icon tile + pills (no hardcoded light colours) ---- */
-.pd-icon{background:color-mix(in srgb,var(--green) 20%,var(--card,#fff));color:var(--green)}
+.pd-icon{background:none}
 .pd-pill{background:color-mix(in srgb,var(--muted) 16%,transparent);color:var(--text)}
 .pd-pill.is-muted{background:color-mix(in srgb,var(--muted) 16%,transparent);color:var(--muted)}
 .pd-pill.is-ok{background:color-mix(in srgb,var(--green) 16%,transparent);color:var(--green)}
@@ -2121,4 +2344,8 @@ const css = `
 .dw-notice{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 14px;margin-bottom:12px;border-radius:10px;background:color-mix(in srgb,var(--green) 16%,transparent);color:var(--green);font-size:13px}
 .dw-notice button{display:grid;place-items:center;width:24px;height:24px;border-radius:6px;color:inherit;cursor:pointer}
 .dw-notice button:hover{background:rgba(128,128,128,.16)}
+
+/* ---- Facility links inside project tables ---- */
+.pd-facility{font-weight:600;color:var(--text);cursor:pointer}
+.pd-facility:hover{color:var(--green)}
 `;

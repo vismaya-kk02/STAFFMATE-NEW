@@ -343,7 +343,7 @@ const css = `
 .sm-app .nb-btn:focus-visible{outline:2px solid var(--green);outline-offset:2px}
 .sm-app .nb-dot{position:absolute;top:9px;right:10px;width:7px;height:7px;border-radius:50%;background:var(--danger)}
 
-.sm-app .nb-panel{position:fixed;top:72px;right:12px;z-index:60;width:min(430px,calc(100vw - 24px));max-height:min(470px,calc(100vh - 100px));display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);color:var(--text)}
+.sm-app .nb-panel{position:fixed;top:72px;right:12px;z-index:60;width:min(380px,calc(100vw - 24px));max-height:min(470px,calc(78vh - 78px));display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);color:var(--text)}
 .sm-app .nb-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 22px 14px;border-bottom:1px solid var(--line)}
 .sm-app .nb-head h2{margin:0;font-size:clamp(18px,1.1vw + .2rem,21px);font-weight:700;color:var(--text)}
 .sm-app .nb-mark{padding:4px 0;font-size:var(--fs-sm);font-weight:600;color:var(--green)}

@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from "react";
 import {
   Factory, Building2, CircleCheck, CalendarDays, UserPlus, Inbox, ChevronRight,
-  Clock, ClipboardCheck, TriangleAlert, Ban, FileWarning, Megaphone,
-  CalendarClock, BookOpen, ListChecks,
+  Clock, ClipboardCheck, TriangleAlert, Megaphone,
+  CalendarClock, BookOpen,
 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import AddWorkerPage from "../../../../features/workers/pages/AddWorkerPage";
@@ -147,10 +147,70 @@ const projects = [
  * IDs match the data in WorkersPage: Ivan Petrenko SM-1042, Marko Jovanović SM-0922, Anh Popa SM-1149.
  */
 const alerts: AlertItem[] = [
-  { icon: <Ban size={18} />, who: "Ivan Petrenko", text: "— Blocked: SP not verified for 03 Feb 2025 start (AutoParts Slovakia)", warn: false, to: workerLink("SM-1042") },
-  { icon: <FileWarning size={18} />, who: "Marko Jovanović", text: "— TRC / Residence Card expired 3 days ago", warn: false, to: workerLink("SM-0922") },
-  { icon: <Ban size={18} />, who: "Anh Popa", text: "— Blocked: SP not verified for 07 Sep 2026 start (Line 3 Assembly)", warn: false, to: workerLink("SM-1149") },
-  { icon: <ListChecks size={18} />, who: "1", text: "worker(s) have daily records to review after later Social Insurance verification", warn: true, to: DAILY_STATUS_LINK },
+  {
+    icon: (
+      <img
+        src="/images/blocked.svg"
+        alt=""
+        aria-hidden="true"
+        width={18}
+        height={18}
+        style={{ display: "block" }}
+      />
+    ),
+    who: "Ivan Petrenko",
+    text: "— Blocked: SP not verified for 03 Feb 2025 start (AutoParts Slovakia)",
+    warn: false,
+    to: workerLink("SM-1042"),
+  },
+  {
+    icon: (
+      <img
+        src="/images/trc.svg"
+        alt=""
+        aria-hidden="true"
+        width={18}
+        height={18}
+        style={{ display: "block" }}
+      />
+    ),
+    who: "Marko Jovanović",
+    text: "— TRC / Residence Card expired 3 days ago",
+    warn: false,
+    to: workerLink("SM-0922"),
+  },
+  {
+    icon: (
+      <img
+        src="/images/blocked.svg"
+        alt=""
+        aria-hidden="true"
+        width={18}
+        height={18}
+        style={{ display: "block" }}
+      />
+    ),
+    who: "Anh Popa",
+    text: "— Blocked: SP not verified for 07 Sep 2026 start (Line 3 Assembly)",
+    warn: false,
+    to: workerLink("SM-1149"),
+  },
+  {
+    icon: (
+      <img
+        src="/images/records.svg"
+        alt=""
+        aria-hidden="true"
+        width={18}
+        height={18}
+        style={{ display: "block" }}
+      />
+    ),
+    who: "1",
+    text: "worker(s) have daily records to review after later Social Insurance verification",
+    warn: true,
+    to: DAILY_STATUS_LINK,
+  },
 ];
 
 const beds = [
@@ -321,7 +381,21 @@ const ProjectsTable: React.FC = () => {
   const go = useGo();
   return (
     <section className="sm-card sm-pad">
-      <CardHead icon={<Factory size={16} strokeWidth={1.6} />} title="Projects & Assignments" link="View all" to="/admin/projects" />
+      <CardHead
+        icon={
+          <img
+            src="/images/projects.svg"
+            alt=""
+            aria-hidden="true"
+            width={16}
+            height={16}
+            style={{ display: "block" }}
+          />
+        }
+        title="Projects & Assignments"
+        link="View all"
+        to="/admin/projects"
+      />
       <div className="sm-table-wrap">
         <table className="sm-table">
           <thead>
@@ -357,7 +431,7 @@ const CriticalAlerts: React.FC = () => {
   const go = useGo();
   return (
     <section className="sm-card sm-pad">
-      <CardHead icon={<TriangleAlert size={16} strokeWidth={1.6} />} title="Critical Alerts" link="View all" to="/admin/documents" />
+      <CardHead icon={<img src="/images/critical_alerts.svg" />} title="Critical Alerts" link="View all" to="/admin/documents" />
       {alerts.map((a) => (
         <div key={a.who + a.text} className={`sm-alert${a.warn ? " is-warn" : ""}`}>
           {a.icon}
@@ -382,7 +456,21 @@ const AccommodationCard: React.FC = () => {
   const go = useGo();
   return (
     <section className="sm-card sm-pad">
-      <CardHead icon={<Building2 size={16} strokeWidth={1.6} />} title="Accommodation" link="View all" to="/admin/accommodation" />
+      <CardHead
+        icon={
+          <img
+            src="/images/accomodation.svg"
+            alt=""
+            aria-hidden="true"
+            width={16}
+            height={16}
+            style={{ display: "block" }}
+          />
+        }
+        title="Accommodation"
+        link="View all"
+        to="/admin/accommodation"
+      />
       <dl className="sm-kv">
         <dt>Contracted</dt><dd>222 beds</dd>
         <dt>Occupied</dt><dd>4 beds</dd>
@@ -405,7 +493,21 @@ const AccommodationCard: React.FC = () => {
 
 const TasksCard: React.FC = () => (
   <section className="sm-card sm-pad">
-    <CardHead icon={<CircleCheck size={16} strokeWidth={1.6} />} title="My Tasks" link="View all" to="/admin/tasks" />
+    <CardHead
+      icon={
+        <img
+          src="/images/my_task.svg"
+          alt=""
+          aria-hidden="true"
+          width={16}
+          height={16}
+          style={{ display: "block" }}
+        />
+      }
+      title="My Tasks"
+      link="View all"
+      to="/admin/tasks"
+    />
     {tasks.map((t) => (
       <div key={t.title} className="sm-row">
         <div><strong>{t.title}</strong><small>{t.meta}</small></div>
@@ -419,7 +521,19 @@ const AnnouncementsCard: React.FC = () => {
   const go = useGo();
   return (
     <section className="sm-card sm-pad">
-      <CardHead icon={<Megaphone size={16} strokeWidth={1.6} />} title="Company Announcements" />
+      <CardHead
+        icon={
+          <img
+            src="/images/company_announcement.svg"
+            alt=""
+            aria-hidden="true"
+            width={16}
+            height={16}
+            style={{ display: "block" }}
+          />
+        }
+        title="Company Announcements"
+      />
       {announcements.map((a) => (
         <button
           key={a.id}
@@ -596,7 +710,15 @@ export function OverviewContent(): React.JSX.Element {
             <CalendarDays size={16} strokeWidth={1.6} /> As of date
           </button>
           <button type="button" className="sm-btn sm-btn-primary" onClick={() => setAddWorkerOpen(true)}>
-            <UserPlus size={16} strokeWidth={1.8} /> Add Worker
+            <img
+              src="/images/worker_add.svg"
+              alt=""
+              aria-hidden="true"
+              width={16}
+              height={16}
+              style={{ display: "block" }}
+            />{" "}
+            Add Worker
           </button>
         </div>
       </div>

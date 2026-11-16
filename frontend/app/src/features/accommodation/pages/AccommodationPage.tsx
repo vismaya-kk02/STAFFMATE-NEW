@@ -848,6 +848,7 @@ const css = `
 .am-row{cursor:pointer}
 .am-row:hover td,.am-row:focus-visible td{background:#f6f5f1}
 .am-row:focus-visible{outline:2px solid #166534;outline-offset:-2px}
+.sm-table-strong:hover{color: #166534}
 
 /* ---- Add Facility modal ---- */
 .am-overlay{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(40,40,40,.38);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);overflow-y:auto}
