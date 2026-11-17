@@ -1317,11 +1317,21 @@ const css = `
 .sm-pill.muted {
   background: #eeede8;
   color: var(--muted);
+  padding:4px 6px;
 }
 
 .sm-pill.info {
   background: #e3ecfb;
   color: #2c55b8;
+}
+  /* Reduce New and In Progress status button size */
+.sm-pill {
+  padding: 3px 7px !important;
+  font-size: 13px !important;
+  line-height: 1.3 !important;
+  border-radius: 14px;
+  min-height: 0;
+  font-weight: 600 ;
 }
 
 /* Company Announcements table (all colours come from the theme variables,
@@ -1572,7 +1582,7 @@ const css = `
 /* New announcement modal */
 
 .tk-announcement-modal {
-  max-width: 790px;
+  max-width: 660px;
   padding: 31px 30px 27px;
 }
 
@@ -1592,12 +1602,12 @@ const css = `
 
 .tk-announcement-form .tk-field input,
 .tk-announcement-form .tk-field select {
-  height: 41px;
+  height: 36px;
 }
 
 .tk-announcement-form .tk-field textarea {
-  height: 84px;
-  min-height: 84px;
+  height: 74px;
+  min-height: 80px;
 }
 
 .tk-announcement-two-col {
@@ -1618,8 +1628,8 @@ const css = `
 }
 
 .tk-checkbox-field input {
-  width: 19px;
-  height: 19px;
+  width: 16px;
+  height: 16px;
   margin: 0;
   accent-color: #166534;
   cursor: pointer;
@@ -1641,14 +1651,14 @@ const css = `
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 42px;
-  padding: 0 18px;
+  min-height: 36px;
+  padding: 0 14px;
   border: 0;
   border-radius: 9px;
   background: #166534;
   color: #fff;
   font-family: inherit;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   transition: background 0.2s;
@@ -1870,6 +1880,7 @@ const css = `
   font-size: 13px;
   color: #171d19;
   cursor: pointer;
+  margin-bottom: 10px;
 }
 
 .tk-status-select select:focus {
@@ -1889,7 +1900,6 @@ const css = `
 }
 
 .tk-comments-title {
-  margin: 18px 0 10px;
   font-size: 14px;
   font-weight: 600;
   color: #171d19;
@@ -1898,6 +1908,8 @@ const css = `
 .tk-comment {
   padding: 0 6px;
   margin-bottom: 10px;
+  margin-top:10px;
+  font-size: 14px;
 }
 
 .tk-comment strong {

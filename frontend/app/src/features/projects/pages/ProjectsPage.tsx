@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   ChevronRight, ChevronLeft, Plus, Search, SlidersHorizontal, Columns3, Download,
   ChevronDown, CircleCheck, ListX, Umbrella, TriangleAlert, BarChart3, CalendarX2,
@@ -52,6 +52,9 @@ interface DayWorker {
   notEligible?: boolean; // Social Insurance not verified -> never counted as worked
 }
 
+/** Identifies a worker when opening the worker profile page. */
+interface WorkerRef { name: string; code?: string; role?: string; project: string }
+
 const DAY_WORKERS: DayWorker[] = [
   { id: "w1", name: "Andriy Le", code: "SM-1143", role: "Assembler" },
   { id: "w2", name: "Anh Popa", code: "SM-1149", role: "Packer", notEligible: true },
@@ -80,12 +83,31 @@ const AUTOPARTS_WORKERS: DayWorker[] = [
   { id: "a10", name: "Vlad Bratu", code: "SM-1117", role: "Assembler" },
   { id: "a11", name: "Vlad Vasilev", code: "SM-1116", role: "Forklift Operator" },
 ];
+
+// Warehouse Ops roster (alphabetical, as shown in the reference screenshot)
+const WAREHOUSE_WORKERS: DayWorker[] = [
+  { id: "h1", name: "Andrei Rusu", code: "SM-0432", role: "Warehouse Associate" },
+  { id: "h2", name: "Elena Popescu", code: "SM-0876", role: "Quality Control Inspector" },
+  { id: "h3", name: "Georgi Bondar", code: "SM-1132", role: "Machine Operator" },
+  { id: "h4", name: "Maksym Bratu", code: "SM-1128", role: "Packer" },
+  { id: "h5", name: "Maksym Nguyen", code: "SM-1155", role: "Forklift Operator" },
+  { id: "h6", name: "Petar Marković", code: "SM-1147", role: "Assembler", notEligible: true },
+  { id: "h7", name: "Stefan Nguyen", code: "SM-1152", role: "Production Operator" },
+  { id: "h8", name: "Taras Ionescu", code: "SM-1130", role: "Packer" },
+  { id: "h9", name: "Viktor Dimitrov", code: "SM-1134", role: "Forklift Operator" },
+  { id: "h10", name: "Vlad Stoica", code: "SM-1138", role: "Warehouse Associate" },
+  { id: "h11", name: "Zoran Ilić", code: "SM-1141", role: "Machine Operator" },
+];
+
 const workersFor = (project: string): DayWorker[] =>
-  project === "AutoParts Slovakia" ? AUTOPARTS_WORKERS : DAY_WORKERS;
+  project === "AutoParts Slovakia" ? AUTOPARTS_WORKERS
+    : project === "Warehouse Ops" ? WAREHOUSE_WORKERS
+    : DAY_WORKERS;
 
 const DEFAULT_REASON = "Scheduled day off / not scheduled to work";
 const HOLIDAY_REASON = "Factory holiday / shutdown";
-const REASONS = [DEFAULT_REASON, "Sick leave", "Approved leave", "Absent — no notice", HOLIDAY_REASON];
+const SICK_REASON = "Sickness / sick leave";
+const REASONS = [DEFAULT_REASON, SICK_REASON, "Approved leave", "Absent — no notice", HOLIDAY_REASON];
 
 interface Mark { didNotWork: boolean; reason: string; note: string }
 type DayState = "not_started" | "draft" | "confirmed";
@@ -134,6 +156,28 @@ const stamp = () => {
 // Demo data so the "Confirmed by …" state shows on first load
 const SEED_CONFIRMATIONS: Record<string, Confirmation> = {
   [keyOf("AutoParts Slovakia", DEFAULT_DAY)]: { by: CONFIRMER, at: "2026-09-09 08:29" },
+  [keyOf("Warehouse Ops", DEFAULT_DAY)]: { by: CONFIRMER, at: "2026-09-09 08:41" },
+};
+
+// Demo recorded outcomes for seeded confirmed days (workerId -> mark)
+const SEED_MARKS: Record<string, Record<string, Mark>> = {
+  [keyOf("Warehouse Ops", DEFAULT_DAY)]: {
+    h7: { didNotWork: true, reason: SICK_REASON, note: "" }, // Stefan Nguyen
+  },
+};
+
+/** Marks for a project/day: fresh defaults, seeded outcomes (if confirmed), and any holiday ranges covering the day. */
+const buildMarks = (proj: string, iso: string, list: Holiday[], conf: Record<string, Confirmation>): Record<string, Mark> => {
+  const roster = workersFor(proj);
+  const next = freshMarks(roster);
+  const seeded = conf[keyOf(proj, iso)] ? SEED_MARKS[keyOf(proj, iso)] : undefined;
+  if (seeded) Object.entries(seeded).forEach(([id, m]) => { if (next[id]) next[id] = { ...m }; });
+  list.filter((h) => h.project === proj && iso >= h.from && iso <= h.to).forEach((h) => {
+    roster.filter((w) => !w.notEligible && !h.exceptions.includes(w.id)).forEach((w) => {
+      next[w.id] = { didNotWork: true, reason: HOLIDAY_REASON, note: h.note };
+    });
+  });
+  return next;
 };
 
 /* ---------- Factory holiday / shutdown modal ---------- */
@@ -324,12 +368,129 @@ const correctCss = `
 .cm-modal .ap-save{margin-top:16px}
 `;
 
+/* ---------- Single-record correction modal (Correct button on a confirmed day) ---------- */
+const OUTCOME_WORKED = "Worked";
+const DNW_PREFIX = "Did not work — ";
+const OUTCOMES = [OUTCOME_WORKED, ...REASONS.map((r) => DNW_PREFIX + r)];
+const NE_OUTCOME = "Not eligible — Social Insurance not verified";
+const outcomeOf = (m: Mark) => (m.didNotWork ? DNW_PREFIX + m.reason : OUTCOME_WORKED);
+
+interface AuditEntry {
+  project: string;
+  day: string;
+  worker: string;
+  from: string;
+  to: string;
+  reason: string;
+  by: string;
+  at: string;
+}
+
+function FixModal({ worker, day, current, notEligible, onClose, onSave }: {
+  worker: DayWorker;
+  day: string;
+  current: Mark;
+  notEligible: boolean;
+  onClose: () => void;
+  onSave: (outcome: string, reason: string) => void;
+}): React.JSX.Element {
+  const currentLabel = notEligible ? NE_OUTCOME : outcomeOf(current);
+  const outcomeOptions = notEligible ? [NE_OUTCOME, ...OUTCOMES] : OUTCOMES;
+  const [outcome, setOutcome] = useState(currentLabel);
+  const [reason, setReason] = useState("");
+  const [touched, setTouched] = useState(false);
+  const areaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Close on Escape + lock page scroll while open
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
+  }, [onClose]);
+
+  const missing = touched && !reason.trim();
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setTouched(true);
+    if (!reason.trim()) { areaRef.current?.focus(); return; }
+    onSave(outcome, reason.trim());
+  };
+
+  return createPortal(
+    <>
+      <style>{modalCss}{fixCss}</style>
+      <div className="ap-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+        <form className="ap-modal fx-modal" role="dialog" aria-modal="true" aria-labelledby="fx-title" onSubmit={submit} noValidate>
+          <div className="ap-head">
+            <h2 id="fx-title">{worker.name} · {fmtDate(day)}</h2>
+            <button type="button" className="ap-close" aria-label="Close" onClick={onClose}>
+              <X size={20} strokeWidth={1.5} />
+            </button>
+          </div>
+
+          <div className="ap-field fx-current">
+            <span className="fx-label">Currently recorded</span>
+            <span className="fx-value">{currentLabel}</span>
+          </div>
+
+          <div className="ap-field">
+            <label htmlFor="fx-outcome">New outcome *</label>
+            <div className="ap-select">
+              <select id="fx-outcome" value={outcome} onChange={(e) => setOutcome(e.target.value)}>
+                {outcomeOptions.map((o) => <option key={o}>{o}</option>)}
+              </select>
+              <ChevronDown size={18} />
+            </div>
+          </div>
+
+          <div className="ap-field">
+            <label htmlFor="fx-reason">Reason for the correction * (kept in the audit trail)</label>
+            <textarea
+              id="fx-reason"
+              ref={areaRef}
+              className={missing ? "is-error" : ""}
+              rows={3}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              aria-invalid={missing}
+            />
+            {missing && <span className="ap-err">Enter a reason for the correction.</span>}
+          </div>
+
+          <button type="submit" className="ap-save">Save correction</button>
+        </form>
+      </div>
+    </>,
+    document.body,
+  );
+}
+
+const fixCss = `
+.ap-modal.fx-modal{max-width:735px}
+.fx-modal .ap-field{margin-bottom:18px}
+.fx-label{font-size:13px;color:var(--muted,#6b6b66)}
+.fx-value{font-size:15px;color:var(--text,#1c1c1a)}
+.fx-current{gap:8px}
+.fx-modal .ap-field textarea{width:100%;min-height:80px;padding:10px 12px;border:1px solid var(--line,#dedcd5);border-radius:6px;background:#fff;font:inherit;font-size:13.5px;line-height:1.45;color:var(--text,#1c1c1a);outline:none;resize:vertical;box-sizing:border-box}
+.fx-modal .ap-field textarea:focus{border-color:var(--green,#1a6b2f);box-shadow:0 0 0 3px rgba(26,107,47,.12)}
+.fx-modal .ap-field textarea.is-error{border-color:#b42318}
+.fx-modal .ap-save{margin-top:4px}
+`;
+
 /* ---------- Daily work status tab ---------- */
-function DailyWorkStatus({ holidayRef }: { holidayRef: React.MutableRefObject<(() => void) | null> }): React.JSX.Element {
+function DailyWorkStatus({ holidayRef, onOpenWorker }: {
+  holidayRef: React.MutableRefObject<(() => void) | null>;
+  onOpenWorker: (w: WorkerRef) => void;
+}): React.JSX.Element {
   const projectNames = PROJECTS.filter((p) => p.status !== "Completed").map((p) => p.name);
   const [project, setProject] = useState("AutoParts Slovakia");
   const [day, setDay] = useState(DEFAULT_DAY);
-  const [marks, setMarks] = useState<Record<string, Mark>>(() => freshMarks(workersFor("AutoParts Slovakia")));
+  const [marks, setMarks] = useState<Record<string, Mark>>(() =>
+    buildMarks("AutoParts Slovakia", DEFAULT_DAY, [], SEED_CONFIRMATIONS),
+  );
   const [confirmations, setConfirmations] = useState<Record<string, Confirmation>>(SEED_CONFIRMATIONS);
   const [state, setState] = useState<DayState>(
     SEED_CONFIRMATIONS[keyOf("AutoParts Slovakia", DEFAULT_DAY)] ? "confirmed" : "not_started",
@@ -340,19 +501,17 @@ function DailyWorkStatus({ holidayRef }: { holidayRef: React.MutableRefObject<((
   // "Correct all as worked" dialog + the confirmation message shown after it
   const [correcting, setCorrecting] = useState<ReviewItem | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Single-record "Correct" dialog on a confirmed day + audit trail of corrections
+  const [fixing, setFixing] = useState<DayWorker | null>(null);
+  const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
+  // Workers whose "not eligible" record was corrected for a given project-day ("project|day|workerId")
+  const [eligibleFix, setEligibleFix] = useState<string[]>([]);
 
-  // Build the marks for a project/day, applying any saved holiday ranges that cover it.
+  // Build the marks for a project/day, applying seeded outcomes and any saved holiday ranges that cover it.
   const load = (proj: string, iso: string, list: Holiday[], conf: Record<string, Confirmation> = confirmations) => {
-    const matches = list.filter((h) => h.project === proj && iso >= h.from && iso <= h.to);
-    const roster = workersFor(proj);
-    const next = freshMarks(roster);
-    matches.forEach((h) => {
-      roster.filter((w) => !w.notEligible && !h.exceptions.includes(w.id)).forEach((w) => {
-        next[w.id] = { didNotWork: true, reason: HOLIDAY_REASON, note: h.note };
-      });
-    });
-    setMarks(next);
-    setState(conf[keyOf(proj, iso)] ? "confirmed" : matches.length ? "draft" : "not_started");
+    const hasHoliday = list.some((h) => h.project === proj && iso >= h.from && iso <= h.to);
+    setMarks(buildMarks(proj, iso, list, conf));
+    setState(conf[keyOf(proj, iso)] ? "confirmed" : hasHoliday ? "draft" : "not_started");
   };
 
   const changeDay = (iso: string) => { if (iso) { setDay(iso); load(project, iso, holidays); } };
@@ -369,18 +528,36 @@ function DailyWorkStatus({ holidayRef }: { holidayRef: React.MutableRefObject<((
     }
   };
 
-  const saveDraft = () => {
-    setState("draft");
-    dropConfirmation();
-  };
-
   const confirmDay = () => {
     setConfirmations((c) => ({ ...c, [keyOf(project, day)]: { by: CONFIRMER, at: stamp() } }));
     setState("confirmed");
   };
 
+  // Single-record correction from the confirmed table: the day stays confirmed, the change is logged.
+  const saveCorrection = (w: DayWorker, outcome: string, reason: string) => {
+    const before = isNE(w) ? NE_OUTCOME : outcomeOf(marks[w.id]);
+    if (outcome === before) { setFixing(null); return; } // nothing changed
+    if (isNE(w)) setEligibleFix((l) => [...l, `${keyOf(project, day)}|${w.id}`]);
+    const worked = outcome === OUTCOME_WORKED;
+    setMarks((m) => ({
+      ...m,
+      [w.id]: {
+        ...m[w.id],
+        didNotWork: !worked,
+        reason: worked ? DEFAULT_REASON : outcome.slice(DNW_PREFIX.length),
+      },
+    }));
+    setAuditLog((l) => [
+      ...l,
+      { project, day, worker: w.name, from: before, to: outcome, reason, by: CONFIRMER, at: stamp() },
+    ]);
+    setNotice(`Correction saved for ${w.name} on ${fmtDate(day)}. The reason was added to the audit trail.`);
+    setFixing(null);
+  };
+
   const confirmation = confirmations[keyOf(project, day)];
   const workers = workersFor(project);
+  const isNE = (w: DayWorker) => !!w.notEligible && !eligibleFix.includes(`${keyOf(project, day)}|${w.id}`);
 
   // Called by the "Factory holiday / shutdown" button in the page header.
   holidayRef.current = () => setHolidayOpen(true);
@@ -392,9 +569,9 @@ function DailyWorkStatus({ holidayRef }: { holidayRef: React.MutableRefObject<((
     load(project, day, list); // refresh the visible day if it falls in the range
   };
 
-  const eligible = workers.filter((w) => !w.notEligible);
+  const eligible = workers.filter((w) => !isNE(w));
   const notEligibleCount = workers.length - eligible.length;
-  const didNotWork = eligible.filter((w) => marks[w.id].didNotWork).length;
+  const didNotWork = eligible.filter((w) => marks[w.id]?.didNotWork).length;
   const willWork = eligible.length - didNotWork;
 
   const stats = [
@@ -403,6 +580,9 @@ function DailyWorkStatus({ holidayRef }: { holidayRef: React.MutableRefObject<((
     { label: "Did not work", value: didNotWork, caption: "With a reason each" },
     { label: "Not eligible (Social Insurance)", value: notEligibleCount, caption: "Never counted as worked", danger: true },
   ];
+
+  // Opens the worker profile page for a roster row
+  const openWorker = (w: DayWorker) => onOpenWorker({ name: w.name, code: w.code, role: w.role, project });
 
   return (
     <>
@@ -478,14 +658,16 @@ function DailyWorkStatus({ holidayRef }: { holidayRef: React.MutableRefObject<((
                   <tr key={w.id}>
                     <td>
                       <div className="dw-name">
-                        <strong>{w.name}</strong>
-                        {w.notEligible && <span className="dw-sp">SP</span>}
+                        <button type="button" className="pj-link" onClick={() => openWorker(w)}>
+                          <strong>{w.name}</strong>
+                        </button>
+                        {isNE(w) && <span className="dw-sp">SP</span>}
                       </div>
                       <small>{w.code}</small>
                     </td>
                     <td>{w.role}</td>
                     <td>
-                      {w.notEligible ? (
+                      {isNE(w) ? (
                         <span className="sm-pill bad">Not eligible — Social Insurance not verified</span>
                       ) : m.didNotWork ? (
                         <span className="sm-pill warn">Did not work — {m.reason}</span>
@@ -495,7 +677,7 @@ function DailyWorkStatus({ holidayRef }: { holidayRef: React.MutableRefObject<((
                     </td>
                     <td className="dw-note-ro">{m.note}</td>
                     <td className="dw-act">
-                      <button type="button" className="dw-correct" onClick={saveDraft}>Correct</button>
+                      <button type="button" className="dw-correct" onClick={() => setFixing(w)}>Correct</button>
                     </td>
                   </tr>
                 );
@@ -520,12 +702,14 @@ function DailyWorkStatus({ holidayRef }: { holidayRef: React.MutableRefObject<((
                   <tr key={w.id}>
                     <td>
                       <div className="dw-name">
-                        <strong>{w.name}</strong>
-                        {w.notEligible && <span className="dw-sp">SP</span>}
+                        <button type="button" className="pj-link" onClick={() => openWorker(w)}>
+                          <strong>{w.name}</strong>
+                        </button>
+                        {isNE(w) && <span className="dw-sp">SP</span>}
                       </div>
                       <small>
                         {w.code}
-                        {w.notEligible && (
+                        {isNE(w) && (
                           <> · <span className="dw-warn">Not eligible — Social Insurance not verified; will not count as worked</span></>
                         )}
                       </small>
@@ -584,7 +768,16 @@ function DailyWorkStatus({ holidayRef }: { holidayRef: React.MutableRefObject<((
 
       {reviews.length > 0 && (
         <section className="sm-card dw-review">
-          <h3><ListX size={16} strokeWidth={1.6} /> Needs review after later Social Insurance verification</h3>
+         <h3>
+          <img
+            src="/images/review.svg"
+            alt=""
+            width="16"
+            height="16"
+            className="heading-icon"
+          />
+          Needs review after later Social Insurance verification
+        </h3>
           <p>
             Social Insurance evidence was verified for an earlier date. Nothing has changed automatically — an
             authorised user corrects each record with a reason.
@@ -592,7 +785,7 @@ function DailyWorkStatus({ holidayRef }: { holidayRef: React.MutableRefObject<((
           {reviews.map((r) => (
             <div key={r.id} className="dw-review-row">
               <div>
-                <strong>{r.worker} — {r.days} day(s) on {r.project}</strong>
+                <h3>{r.worker} — {r.days} day(s) on {r.project}</h3>
                 <small>{r.from} to {r.to} · recorded as not eligible, registration now effective</small>
               </div>
               <div className="dw-review-btns">
@@ -629,6 +822,17 @@ function DailyWorkStatus({ holidayRef }: { holidayRef: React.MutableRefObject<((
         onApply={applyHoliday}
       />
 
+      {fixing && (
+        <FixModal
+          worker={fixing}
+          day={day}
+          current={marks[fixing.id]}
+          notEligible={isNE(fixing)}
+          onClose={() => setFixing(null)}
+          onSave={(outcome, reason) => saveCorrection(fixing, outcome, reason)}
+        />
+      )}
+
       {correcting && (
         <CorrectModal
           item={correcting}
@@ -651,9 +855,43 @@ const RANGES = ["Yesterday", "Last 7 days", "Month"] as const;
 type Range = (typeof RANGES)[number];
 
 interface Counts { assigned: number; worked: number; dnw: number; ne: number; incomplete: number }
+interface DayBar { label: string; worked: number; dnw: number; ne: number; unconfirmed: number }
+interface Headcount { toLabel: string; toN: number; fromLabel: string; fromN: number; joiners: number; leavers: number }
+interface MonthData {
+  key: string;
+  label: string;
+  year: number;
+  month: number;            // 0-based (Jan = 0)
+  incDay: number | null;    // day of month that still has an unconfirmed project-day
+  projects: Record<string, Counts>;
+  hc: Headcount;
+}
 
-// Worker-days from confirmed daily records, 02 Sep – 08 Sep 2026 (demo data).
-const COMPANY_7D: Counts = { assigned: 277, worked: 221, dnw: 41, ne: 15, incomplete: 3 };
+const ZERO: Counts = { assigned: 0, worked: 0, dnw: 0, ne: 0, incomplete: 0 };
+const sumCounts = (list: Counts[]): Counts =>
+  list.reduce(
+    (a, c) => ({
+      assigned: a.assigned + c.assigned,
+      worked: a.worked + c.worked,
+      dnw: a.dnw + c.dnw,
+      ne: a.ne + c.ne,
+      incomplete: a.incomplete + c.incomplete,
+    }),
+    ZERO,
+  );
+
+/* Yesterday — 08 Sep 2026 (confirmed daily records only; unconfirmed projects count as incomplete) */
+const PROJECT_YDAY: Record<string, Counts> = {
+  "AutoParts Slovakia": { assigned: 11, worked: 10, dnw: 0, ne: 1, incomplete: 0 },
+  "Line 3 Assembly": { assigned: 0, worked: 0, dnw: 0, ne: 0, incomplete: 1 },
+  "Warehouse Ops": { assigned: 11, worked: 11, dnw: 0, ne: 0, incomplete: 0 },
+  "Packaging Line B": { assigned: 0, worked: 0, dnw: 0, ne: 0, incomplete: 0 },
+  "CNC Machining Hall": { assigned: 0, worked: 0, dnw: 0, ne: 0, incomplete: 1 },
+  "Cold Storage Facility": { assigned: 0, worked: 0, dnw: 0, ne: 0, incomplete: 0 },
+};
+const HC_YDAY: Headcount = { toLabel: "08 Sep 2026", toN: 41, fromLabel: "08 Sep 2026", fromN: 41, joiners: 0, leavers: 0 };
+
+/* Last 7 days — 02 Sep to 08 Sep 2026 */
 const PROJECT_7D: Record<string, Counts> = {
   "AutoParts Slovakia": { assigned: 79, worked: 62, dnw: 9, ne: 8, incomplete: 0 },
   "Line 3 Assembly": { assigned: 61, worked: 48, dnw: 12, ne: 1, incomplete: 1 },
@@ -662,42 +900,67 @@ const PROJECT_7D: Record<string, Counts> = {
   "CNC Machining Hall": { assigned: 68, worked: 54, dnw: 10, ne: 4, incomplete: 1 },
   "Cold Storage Facility": { assigned: 0, worked: 0, dnw: 0, ne: 0, incomplete: 0 },
 };
-
-interface DayBar { label: string; worked: number; dnw: number; ne: number; unconfirmed: number }
-// The last 7 entries (02–08 Sep) add up to COMPANY_7D.
-const DAY_BARS: DayBar[] = [
-  { label: "01 Sep", worked: 34, dnw: 4, ne: 2, unconfirmed: 0 },
-  { label: "02 Sep", worked: 34, dnw: 5, ne: 2, unconfirmed: 0 },
-  { label: "03 Sep", worked: 35, dnw: 2, ne: 4, unconfirmed: 0 },
-  { label: "04 Sep", worked: 37, dnw: 1, ne: 3, unconfirmed: 0 },
-  { label: "05 Sep", worked: 26, dnw: 13, ne: 2, unconfirmed: 0 },
-  { label: "06 Sep", worked: 27, dnw: 13, ne: 1, unconfirmed: 0 },
-  { label: "07 Sep", worked: 30, dnw: 4, ne: 2, unconfirmed: 5 },
-  { label: "08 Sep", worked: 32, dnw: 3, ne: 1, unconfirmed: 6 },
+const HC_7D: Headcount = { toLabel: "08 Sep 2026", toN: 41, fromLabel: "02 Sep 2026", fromN: 44, joiners: 3, leavers: 1 };
+const WEEK_BARS: DayBar[] = [
+  { label: "02 Sep", worked: 35, dnw: 4, ne: 2, unconfirmed: 0 },
+  { label: "03 Sep", worked: 37, dnw: 2, ne: 4, unconfirmed: 0 },
+  { label: "04 Sep", worked: 39, dnw: 1, ne: 2, unconfirmed: 0 },
+  { label: "05 Sep", worked: 24, dnw: 15, ne: 2, unconfirmed: 0 },
+  { label: "06 Sep", worked: 25, dnw: 14, ne: 1, unconfirmed: 0 },
+  { label: "07 Sep", worked: 27, dnw: 0, ne: 3, unconfirmed: 7 },
+  { label: "08 Sep", worked: 21, dnw: 0, ne: 1, unconfirmed: 7 },
 ];
-
-const RANGE_DAYS: Record<Range, number> = { Yesterday: 1, "Last 7 days": 7, Month: 8 };
-const REASON_WEIGHTS: [string, number][] = [
+const WEEK_REASONS: [string, number][] = [
   [DEFAULT_REASON, 34], ["Annual leave", 4], ["Sickness / sick leave", 1], ["Medical appointment", 1], ["Other", 1],
 ];
-const HEADCOUNT: Record<Range, { from: string; fromN: number; toN: number; joiners: number; leavers: number }> = {
-  Yesterday: { from: "07 Sep 2026", fromN: 42, toN: 41, joiners: 0, leavers: 1 },
-  "Last 7 days": { from: "02 Sep 2026", fromN: 44, toN: 41, joiners: 3, leavers: 1 },
-  Month: { from: "01 Sep 2026", fromN: 46, toN: 41, joiners: 3, leavers: 8 },
+
+/* Month — full calendar months */
+const MONTH_REASONS: [string, number][] = [
+  [DEFAULT_REASON, 209],
+  ["Factory-wide holiday or shutdown", 55],
+  ["Medical appointment", 10],
+  ["Sickness / sick leave", 10],
+  ["Annual leave", 4],
+  ["Unexcused absence", 4],
+  ["Other", 2],
+];
+
+const PROJECT_AUG: Record<string, Counts> = {
+  "AutoParts Slovakia": { assigned: 391, worked: 255, dnw: 113, ne: 23, incomplete: 0 },
+  "Line 3 Assembly": { assigned: 394, worked: 298, dnw: 69, ne: 27, incomplete: 0 },
+  "Warehouse Ops": { assigned: 347, worked: 276, dnw: 61, ne: 10, incomplete: 0 },
+  "Packaging Line B": { assigned: 0, worked: 0, dnw: 0, ne: 0, incomplete: 0 },
+  "CNC Machining Hall": { assigned: 284, worked: 233, dnw: 51, ne: 0, incomplete: 1 },
+  "Cold Storage Facility": { assigned: 0, worked: 0, dnw: 0, ne: 0, incomplete: 0 },
 };
+
+/** Demo data for earlier months: August scaled by a factor, with every day confirmed. */
+const scaleProjects = (base: Record<string, Counts>, f: number): Record<string, Counts> =>
+  Object.fromEntries(
+    Object.entries(base).map(([k, c]) => {
+      const assigned = Math.round(c.assigned * f);
+      const dnw = Math.round(c.dnw * f);
+      const ne = Math.round(c.ne * f);
+      return [k, { assigned, dnw, ne, worked: Math.max(0, assigned - dnw - ne), incomplete: 0 }];
+    }),
+  );
+
+const MONTHS: MonthData[] = [
+  {
+    key: "2026-08", label: "August 2026", year: 2026, month: 7, incDay: 24, projects: PROJECT_AUG,
+    hc: { toLabel: "31 Aug 2026", toN: 43, fromLabel: "01 Aug 2026", fromN: 42, joiners: 4, leavers: 1 },
+  },
+  {
+    key: "2026-07", label: "July 2026", year: 2026, month: 6, incDay: null, projects: scaleProjects(PROJECT_AUG, 1.02),
+    hc: { toLabel: "31 Jul 2026", toN: 42, fromLabel: "01 Jul 2026", fromN: 40, joiners: 3, leavers: 1 },
+  },
+  {
+    key: "2026-06", label: "June 2026", year: 2026, month: 5, incDay: null, projects: scaleProjects(PROJECT_AUG, 0.94),
+    hc: { toLabel: "30 Jun 2026", toN: 40, fromLabel: "01 Jun 2026", fromN: 39, joiners: 2, leavers: 1 },
+  },
+];
 
 const sumDay = (b: DayBar) => b.worked + b.dnw + b.ne;
-
-const scaleCounts = (c: Counts, f: number, range: Range): Counts => {
-  const assigned = Math.round(c.assigned * f);
-  const dnw = Math.round(c.dnw * f);
-  const ne = Math.round(c.ne * f);
-  return {
-    assigned, dnw, ne,
-    worked: Math.max(0, assigned - dnw - ne),
-    incomplete: range === "Yesterday" ? (c.incomplete > 0 ? 1 : 0) : c.incomplete,
-  };
-};
 
 /** Split `total` across weights so the parts add up exactly (largest remainder). */
 const apportion = (total: number, weights: number[]): number[] => {
@@ -712,7 +975,30 @@ const apportion = (total: number, weights: number[]): number[] => {
   return out;
 };
 
-const pct = (n: number, d: number) => (d > 0 ? `${((n / d) * 100).toFixed(1)}%` : "—");
+/** One bar per day of the month; the day bars add up exactly to the month's company totals. */
+const buildMonthBars = (m: MonthData): DayBar[] => {
+  const c = sumCounts(Object.values(m.projects));
+  const days = new Date(m.year, m.month + 1, 0).getDate();
+  const idx = Array.from({ length: days }, (_, i) => i + 1);
+  const weekend = (d: number) => {
+    const w = new Date(m.year, m.month, d).getDay();
+    return w === 0 || w === 6;
+  };
+  const part = (d: number) => (d === m.incDay ? 0.75 : 1);
+  const assigned = apportion(c.assigned, idx.map(part));
+  const dnw = apportion(c.dnw, idx.map((d) => (weekend(d) ? 3 : 1) * part(d)));
+  const ne = apportion(c.ne, idx.map(part));
+  return idx.map((d, i) => ({
+    label: String(d).padStart(2, "0"),
+    worked: Math.max(0, assigned[i] - dnw[i] - ne[i]),
+    dnw: dnw[i],
+    ne: ne[i],
+    unconfirmed: d === m.incDay ? 4 : 0,
+  }));
+};
+
+/** 21/22 -> "95.5%", 75.0 -> "75%", 100.0 -> "100%" */
+const pct = (n: number, d: number) => (d > 0 ? `${parseFloat(((n / d) * 100).toFixed(1))}%` : "—");
 
 function StatisticsTab({ exportRef, onSeeWhich }: {
   exportRef: React.MutableRefObject<(() => void) | null>;
@@ -720,36 +1006,58 @@ function StatisticsTab({ exportRef, onSeeWhich }: {
 }): React.JSX.Element {
   const [scope, setScope] = useState("Whole company");
   const [range, setRange] = useState<Range>("Last 7 days");
+  const [monthKey, setMonthKey] = useState(MONTHS[0].key);
 
-  const bars = DAY_BARS.slice(-RANGE_DAYS[range]);
-  const factor = bars.reduce((a, b) => a + sumDay(b), 0) / COMPANY_7D.assigned;
-  const share = scope === "Whole company" ? 1 : PROJECT_7D[scope].assigned / COMPANY_7D.assigned;
+  const month = MONTHS.find((m) => m.key === monthKey) ?? MONTHS[0];
+  const monthBars = useMemo(() => buildMonthBars(month), [month]);
 
-  const company = scaleCounts(COMPANY_7D, factor, range);
-  const rows = PROJECTS.map((p) => ({ name: p.name, c: scaleCounts(PROJECT_7D[p.name], factor, range) }));
-  const view = scope === "Whole company" ? company : rows.find((r) => r.name === scope)!.c;
+  // Per-project counts for the selected period
+  const byProject = range === "Yesterday" ? PROJECT_YDAY : range === "Last 7 days" ? PROJECT_7D : month.projects;
+  const rows = PROJECTS.map((p) => ({ name: p.name, c: byProject[p.name] ?? ZERO }));
+  const company = sumCounts(rows.map((r) => r.c));
+  const view = scope === "Whole company" ? company : (rows.find((r) => r.name === scope)?.c ?? ZERO);
+  const share = company.assigned > 0 ? view.assigned / company.assigned : 0;
 
-  const scaledBars = bars.map((b) => ({
-    label: b.label,
-    worked: Math.round(b.worked * share),
-    dnw: Math.round(b.dnw * share),
-    ne: Math.round(b.ne * share),
-    unconfirmed: Math.round(b.unconfirmed * share),
-  }));
+  // Chart bars
+  const scaledBars: DayBar[] = (() => {
+    if (range === "Yesterday") {
+      // single bar built straight from the selected scope; each unconfirmed project-day shows as a small hatched cap
+      return [{ label: "08 Sep", worked: view.worked, dnw: view.dnw, ne: view.ne, unconfirmed: view.incomplete * 2 }];
+    }
+    const base = range === "Last 7 days" ? WEEK_BARS : monthBars;
+    return base.map((b) => ({
+      label: b.label,
+      worked: Math.round(b.worked * share),
+      dnw: Math.round(b.dnw * share),
+      ne: Math.round(b.ne * share),
+      unconfirmed:
+        scope === "Whole company"
+          ? b.unconfirmed
+          : b.unconfirmed > 0 && view.incomplete > 0
+            ? Math.max(1, Math.round(b.unconfirmed * share))
+            : 0,
+    }));
+  })();
   const maxTotal = Math.max(1, ...scaledBars.map((b) => sumDay(b) + b.unconfirmed));
 
-  const reasons = view.dnw > 0
-    ? apportion(view.dnw, REASON_WEIGHTS.map(([, w]) => w)).map((n, i) => [REASON_WEIGHTS[i][0], n] as [string, number])
-    : REASON_WEIGHTS.map(([r]) => [r, 0] as [string, number]);
+  // Did-not-work reasons
+  const weights = range === "Month" ? MONTH_REASONS : WEEK_REASONS;
+  const reasons: [string, number][] = view.dnw > 0
+    ? apportion(view.dnw, weights.map(([, w]) => w)).map((n, i) => [weights[i][0], n] as [string, number])
+    : [];
 
-  const hc = HEADCOUNT[range];
+  // Headcount + joiners/leavers
+  const hc = range === "Yesterday" ? HC_YDAY : range === "Last 7 days" ? HC_7D : month.hc;
   const joiners = Math.round(hc.joiners * share);
   const leavers = Math.round(hc.leavers * share);
   const net = joiners - leavers;
 
-  const period = range === "Yesterday"
-    ? "08 Sep 2026"
-    : `${bars[0].label} 2026 to 08 Sep 2026`;
+  const summary =
+    range === "Yesterday"
+      ? `${scope} · Yesterday — 08 Sep 2026`
+      : range === "Last 7 days"
+        ? `${scope} · Last 7 days — 02 Sep 2026 to 08 Sep 2026`
+        : `${scope} · ${month.label}`;
 
   exportRef.current = () => {
     const header = ["Scope", "Assigned", "Worked", "Did not work", "Not eligible", "Worked share", "Incomplete days"];
@@ -759,7 +1067,7 @@ function StatisticsTab({ exportRef, onSeeWhich }: {
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const a = document.createElement("a");
     a.href = url;
-    a.download = `statistics-${range.toLowerCase().replace(/\s+/g, "-")}.csv`;
+    a.download = range === "Month" ? `statistics-${month.key}.csv` : `statistics-${range.toLowerCase().replace(/\s+/g, "-")}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -790,7 +1098,18 @@ function StatisticsTab({ exportRef, onSeeWhich }: {
             <button key={r} type="button" className={range === r ? "is-active" : ""} onClick={() => setRange(r)}>{r}</button>
           ))}
         </div>
-        <div className="st-summary">{scope} · {range} — {period}</div>
+        {range === "Month" && (
+          <div className="dw-field">
+            <label htmlFor="st-month">Month</label>
+            <div className="dw-select st-month">
+              <select id="st-month" value={monthKey} onChange={(e) => setMonthKey(e.target.value)}>
+                {MONTHS.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+              </select>
+              <ChevronDown size={18} />
+            </div>
+          </div>
+        )}
+        <div className="st-summary">{summary}</div>
       </section>
 
       {view.incomplete > 0 && (
@@ -817,7 +1136,7 @@ function StatisticsTab({ exportRef, onSeeWhich }: {
       <div className="st-grid">
         <section className="sm-card st-panel">
           <h3><BarChart3 size={16} strokeWidth={1.6} /> Worker-days by day</h3>
-          <div className="st-chart">
+          <div className={`st-chart${scaledBars.length > 10 ? " is-dense" : ""}`}>
             {scaledBars.map((b) => {
               const h = (v: number) => `${(v / maxTotal) * 100}%`;
               return (
@@ -843,16 +1162,20 @@ function StatisticsTab({ exportRef, onSeeWhich }: {
 
         <section className="sm-card st-panel">
           <h3><CalendarX2 size={16} strokeWidth={1.6} /> Did not work — by reason</h3>
-          <div className="sm-table-wrap">
-            <table className="sm-table st-reasons">
-              <thead><tr><th>Reason</th><th>Worker-days</th></tr></thead>
-              <tbody>
-                {reasons.map(([reason, n]) => (
-                  <tr key={reason}><td>{reason}</td><td>{n}</td></tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {reasons.length === 0 ? (
+            <p className="st-empty">No absences recorded in this period.</p>
+          ) : (
+            <div className="sm-table-wrap">
+              <table className="sm-table st-reasons">
+                <thead><tr><th>Reason</th><th>Worker-days</th></tr></thead>
+                <tbody>
+                  {reasons.map(([reason, n]) => (
+                    <tr key={reason}><td>{reason}</td><td>{n}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
       </div>
 
@@ -887,8 +1210,8 @@ function StatisticsTab({ exportRef, onSeeWhich }: {
         <section className="sm-card st-panel">
           <h3><Users size={16} strokeWidth={1.6} /> Headcount</h3>
           <dl className="st-kv">
-            <dt>Working on 08 Sep 2026</dt><dd>{Math.round(hc.toN * share)}</dd>
-            <dt>Working on {hc.from}</dt><dd>{Math.round(hc.fromN * share)}</dd>
+            <dt>Working on {hc.toLabel}</dt><dd>{Math.round(hc.toN * share)}</dd>
+            <dt>Working on {hc.fromLabel}</dt><dd>{Math.round(hc.fromN * share)}</dd>
           </dl>
           <p className="st-note">
             Headcount counts workers assigned with verified Social Insurance. Workers waiting for verification are not
@@ -901,8 +1224,14 @@ function StatisticsTab({ exportRef, onSeeWhich }: {
           <dl className="st-kv">
             <dt>Joiners (employment start)</dt><dd>{joiners}</dd>
             <dt>Leavers (effective termination date)</dt><dd>{leavers}</dd>
-            <dt>Net change</dt><dd>{net > 0 ? `+${net}` : net}</dd>
+            <dt>Net change</dt><dd>{net >= 0 ? `+${net}` : net}</dd>
           </dl>
+          {range === "Month" && (
+            <p className="st-note">
+              A termination confirmed after the month ended is counted in the month of its effective date, so earlier
+              figures can change.
+            </p>
+          )}
         </section>
       </div>
     </>
@@ -1412,7 +1741,7 @@ function Pill({ tone = "muted", dot = true, children }: { tone?: Tone; dot?: boo
   return <span className={`pd-pill is-${tone}${dot ? "" : " no-dot"}`}>{children}</span>;
 }
 
-function ProjectDetail({ project, id, coordinators, onBack, onStats, onDaily, onSave }: {
+function ProjectDetail({ project, id, coordinators, onBack, onStats, onDaily, onSave, onOpenWorker }: {
   project: Project;
   id: string;
   coordinators: string[];
@@ -1420,6 +1749,7 @@ function ProjectDetail({ project, id, coordinators, onBack, onStats, onDaily, on
   onStats: () => void;
   onDaily: () => void;
   onSave: (patch: ProjectPatch) => void;
+  onOpenWorker: (w: WorkerRef) => void;
 }): React.JSX.Element {
   const d = detailFor(project);
   const [tab, setTab] = useState<DetailTab>("General");
@@ -1580,7 +1910,15 @@ function ProjectDetail({ project, id, coordinators, onBack, onStats, onDaily, on
                 <tbody>
                   {workerRows.map((w) => (
                     <tr key={w.name}>
-                      <td><strong>{w.name}</strong></td>
+                      <td>
+                        <button
+                          type="button"
+                          className="pj-link"
+                          onClick={() => onOpenWorker({ name: w.name, role: w.role, project: project.name })}
+                        >
+                          <strong>{w.name}</strong>
+                        </button>
+                      </td>
                       <td>{spPill(w.sp)}</td>
                       <td>{w.role}</td>
                       <td>{w.start}</td>
@@ -1726,8 +2064,11 @@ function ProjectDetail({ project, id, coordinators, onBack, onStats, onDaily, on
   );
 }
 
+/** Opens the existing Workers page on one worker (WorkersPage reads ?worker=<name>). */
+const workerLink = (w: WorkerRef) => `/admin/workers?worker=${encodeURIComponent(w.name)}`;
+
 /* ---------- Page ---------- */
-export default function ProjectsPage(): React.JSX.Element {
+function ProjectsPageInner({ onOpenWorker }: { onOpenWorker: (w: WorkerRef) => void }): React.JSX.Element {
   const [searchParams, setSearchParams] = useSearchParams();
   // /admin/projects?tab=daily opens the Daily work status tab directly
   const initialTab = searchParams.get("tab");
@@ -1830,6 +2171,7 @@ export default function ProjectsPage(): React.JSX.Element {
           onStats={() => { closeDetail(); setTab("Statistics"); }}
           onDaily={() => { closeDetail(); setTab("Daily work status"); }}
           onSave={handleEdit}
+          onOpenWorker={onOpenWorker}
         />
       </>
     );
@@ -1879,8 +2221,18 @@ export default function ProjectsPage(): React.JSX.Element {
                 shift starts.
               </p>
             </div>
-            <button className="sm-btn sm-btn-outline" onClick={() => holidayRef.current?.()}>
-              <Umbrella size={16} /> Factory holiday / shutdown
+            <button
+              className="sm-btn sm-btn-outline"
+              onClick={() => holidayRef.current?.()}
+            >
+              <img
+                src="/images/factory_holiday.svg"
+                alt=""
+                width="12"
+                height="12"
+                className="btn-icon"
+              />
+              Factory holiday / shutdown
             </button>
           </>
         ) : (
@@ -1907,7 +2259,7 @@ export default function ProjectsPage(): React.JSX.Element {
 
       {isStats && <StatisticsTab exportRef={exportRef} onSeeWhich={() => setTab("Daily work status")} />}
 
-      {isDaily && <DailyWorkStatus holidayRef={holidayRef} />}
+      {isDaily && <DailyWorkStatus holidayRef={holidayRef} onOpenWorker={onOpenWorker} />}
 
       {tab === "Projects" && (
         <>
@@ -2031,9 +2383,37 @@ const css = `
 .dw-select svg{position:absolute;right:14px;top:50%;transform:translateY(-50%);pointer-events:none;color:var(--text)}
 .dw-select-lg{width:345px;max-width:100%}
 .dw-select-lg select{height:50px}
-.dw-date{display:flex;align-items:center;gap:8px}
-.dw-date input{height:52px;padding:0 14px;border:1px solid var(--line);border-radius:8px;background:#fff;font-size:18px;color:var(--text);outline:none}
-.dw-date input:focus{border-color:var(--green)}
+.dw-date {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dw-date input {
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.2;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  outline: none;
+}
+
+.dw-date input::-webkit-datetime-edit {
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text);
+}
+
+.dw-date input:focus {
+  border-color: var(--green);
+}
 .dw-step{display:grid;place-items:center;width:38px;height:38px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--text)}
 .dw-step:hover{background:#f1f1f1}
 .dw-pills{flex-basis:100%;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:10px}
@@ -2052,7 +2432,7 @@ const css = `
 .dw-note:focus{border-color:var(--green);background:#fff}
 .dw-actions{display:flex;justify-content:flex-end;gap:12px;padding:18px 28px 0}
 .dw-review{padding:22px 28px;margin-bottom:16px}
-.dw-review h3{display:flex;align-items:center;gap:10px;font-size:19px;margin:0 0 14px}
+.dw-review h3{display:flex;align-items:center;gap:10px;font-size:16px;margin:0 0 14px;font-weight:600}
 .dw-review p{color:var(--muted);margin:0 0 20px}
 .dw-review-row{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
 .dw-review-row small{display:block;color:var(--muted);margin-top:4px}
@@ -2077,7 +2457,7 @@ const css = `
 .st-wide{margin-bottom:19px}
 .st-panel h3{display:flex;align-items:center;gap:10px;font-size:19px;margin:0 0 18px}
 .st-chart{display:flex;align-items:flex-end;gap:3px;margin-top:6px}
-.st-col{flex:1 1 0;max-width:140px;min-width:0;display:flex;flex-direction:column;align-items:center;gap:8px}
+.st-col{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;gap:8px}
 .st-col>span{font-size:15px;color:var(--muted);white-space:nowrap}
 .st-bar{width:100%;height:170px;display:flex;flex-direction:column;justify-content:flex-end}
 .st-w{background:#1a6b2f}
@@ -2113,7 +2493,7 @@ const css = `
 .pj-table,.dw-table,.st-table,.st-reasons{font-size:13.5px}
 .pj-table th,.dw-table th,.st-table th,.st-reasons th{font-size:12.5px}
 .pj-table td,.dw-table td,.st-table td,.st-reasons td{padding-top:7px;padding-bottom:7px}
-.pj-table small,.dw-table small{font-size:12px;margin-top:1px}
+.pj-table small,.dw-table small{font-size:13px;margin-top:1px}
 .pj-toolbar{padding:12px 16px 8px}
 .pj-search{height:34px;font-size:13px}
 .pj-search input{font-size:13px}
@@ -2130,7 +2510,15 @@ const css = `
 .dw-step{width:28px;height:28px}
 .dw-pills{gap:8px}
 .dw-pills .sm-pill{font-size:12px;padding:3px 10px}
-.sm-pill .dw-dot{width:6px;height:6px;margin-right:6px}
+.sm-pill .dw-dot {
+  display: inline-block;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: currentColor;
+  margin-right: 5px;
+  vertical-align: middle;
+}
 .dw-panel{padding:2px 0 12px;margin-bottom:12px}
 .dw-table .dw-select{width:310px}
 .dw-note{width:150px;height:30px;font-size:13px}
@@ -2147,6 +2535,8 @@ const css = `
 /* statistics */
 .st-scope{width:240px}
 .st-scope select{height:36px}
+.st-month{width:220px;max-width:100%}
+.st-month select{height:36px}
 .st-ctl{padding:3px}
 .st-ctl button{font-size:13px;padding:6px 11px}
 .st-summary{font-size:13.5px;padding-bottom:6px}
@@ -2164,6 +2554,7 @@ const css = `
 .st-legend i{width:11px;height:11px}
 .st-kv{font-size:13.5px;gap:6px 18px;margin-bottom:10px}
 .st-note{font-size:12.5px}
+.st-empty{margin:0;color:var(--muted);font-size:13.5px}
 
 /* ---- Daily work status header: button aligned like the design ---- */
 .dw-title-row{display:flex;align-items:flex-end;justify-content:space-between;gap:46px}
@@ -2176,21 +2567,23 @@ const css = `
 
 /* ---- Statistics: "Worker-days by day" + "Did not work — by reason" cards (match design) ---- */
 .st-grid:not(.st-grid-even){align-items:stretch;gap:24px}
-.st-grid:not(.st-grid-even)>.st-panel{display:flex;flex-direction:column;padding:20px 20px 22px}
+.st-grid:not(.st-grid-even)>.st-panel{display:flex;flex-direction:column;padding:20px 20px 22px;width:460px}
 .st-grid:not(.st-grid-even)>.st-panel h3{font-size:14.5px;font-weight:600;gap:10px;margin:0 0 14px}
 .st-grid:not(.st-grid-even)>.st-panel h3 svg{flex:none;color:var(--muted)}
 
 /* chart */
 .st-chart{display:flex;align-items:flex-end;gap:3px;margin-top:8px}
-.st-col{flex:1 1 0;max-width:140px;min-width:0;gap:6px}
+.st-col{flex:1 1 0;min-width:0;gap:6px}
 .st-bar{height:165px}
 .st-col>span{font-size:12px;color:var(--muted)}
+.st-chart.is-dense{gap:2px}
+.st-chart.is-dense .st-col>span{font-size:11px}
 .st-legend{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin-top:12px;font-size:12.5px;color:var(--muted)}
 .st-legend span{display:inline-flex;align-items:center;gap:6px}
 .st-legend i{width:11px;height:11px}
 
 /* reasons table: full-width rows with dividers, right-aligned count */
-.st-grid:not(.st-grid-even)>.st-panel .sm-table-wrap{margin:0 -4px;overflow-x:auto}
+.st-grid:not(.st-grid-even)>.st-panel .sm-table-wrap{margin:0 -4px}
 .st-reasons{width:100%;border-collapse:collapse}
 .st-reasons th{font-size:12.5px;font-weight:500;color:var(--muted);text-align:left;padding:8px 12px 10px;border-bottom:1px solid var(--line)}
 .st-reasons td{font-size:13.5px;color:var(--text);padding:7px 12px;border-bottom:1px solid var(--line)}
@@ -2211,6 +2604,29 @@ const css = `
 .pd-main{flex:1;min-width:0}
 .pd-main h1{margin:0;font-size:20px;line-height:1.2;padding-bottom:4px;font-weight:600;color:var(--text)}
 .pd-sub{margin:7px 0 10px;font-size:14px;line-height:1.3;color:var(--muted)}
+
+/* Reduce Active, In preparation and Completed badges
+   on the Projects listing page */
+
+.pj-table td .sm-pill {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px !important;
+  height: 22px !important;
+  padding: 0 9px !important;
+  font-size: 13px !important;
+  line-height: 1 !important;
+  border-radius: 20px !important;
+  gap: 5px !important;
+  white-space: nowrap;
+}
+
+.pj-table td .sm-pill::before {
+  width: 6px;
+  height: 6px;
+}
+
 .pd-pills{display:flex;flex-wrap:wrap;padding-top:10px;gap:9px 8px}
 .pd-pill{display:inline-flex;align-items:center;gap:7px;height:22px;padding:0 10px;border-radius:14px;font-size:12px;font-weight:500;line-height:1;background:#eeede8;color:#3d3d3a;white-space:nowrap}
 .pd-pill::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor;flex:none}
@@ -2307,11 +2723,16 @@ const css = `
 .dw-table-ro th:nth-child(1){width:26%}
 .dw-table-ro th:nth-child(2){width:26%}
 .dw-table-ro tbody tr{border-top:1px solid var(--line)}
-.dw-table-ro .sm-pill{font-size:13px;padding:3px 11px}
+.dw-table-ro 
+.sm-pill {
+  font-size: 11px;
+  padding: 2px 8px;
+  line-height: 1.3;
+}
 .dw-note-ro{color:var(--muted)}
 .dw-table-ro td.dw-act{text-align:right;padding-right:56px}
-.dw-correct{background:none;border:0;padding:0;color:var(--green);font-size:13.5px;font-weight:500;cursor:pointer}
-.dw-correct:hover{text-decoration:none}
+.dw-.dw-correct,.dw-table-ro .dw-correct,.dw-table-ro td.dw-act .dw-correct{background:none;border:0;padding:0;color:var(--green,#1a6b2f)!important;font-size:13px;font-weight:500;cursor:pointer}
+.dw-correct:hover,.dw-table-ro .dw-correct:hover{text-decoration:none;color:var(--green,#1a6b2f)!important}
 .dw-review .sm-btn-primary{background:#5fd68a;color:#073b1a;border-color:transparent}
 
 /* ---- Daily work status: top card (matches design) ---- */
@@ -2348,4 +2769,45 @@ const css = `
 /* ---- Facility links inside project tables ---- */
 .pd-facility{font-weight:600;color:var(--text);cursor:pointer}
 .pd-facility:hover{color:var(--green)}
+`;
+
+/* ---------- Exported page: clicking a worker name opens the Workers page at the top ---------- */
+/** Resets the window and any scrolled container (the app shell may scroll inside <main>, not the window). */
+const resetScroll = () => {
+  window.scrollTo(0, 0);
+  document.querySelectorAll<HTMLElement>("*").forEach((el) => { if (el.scrollTop > 0) el.scrollTop = 0; });
+};
+
+export default function ProjectsPage(): React.JSX.Element {
+  const navigate = useNavigate();
+  const [leaving, setLeaving] = useState(false);
+
+  // Fade the Projects page out, then open the Workers page at the top (which fades in).
+  const openWorker = (w: WorkerRef) => {
+    if (leaving) return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    setLeaving(true);
+    setTimeout(() => {
+      navigate(workerLink(w));
+      // run after the Workers page has rendered
+      setTimeout(resetScroll, 0);
+      requestAnimationFrame(() => requestAnimationFrame(resetScroll));
+    }, reduce ? 0 : 180);
+  };
+
+  return (
+    <>
+      <style>{pageFadeCss}</style>
+      <div className={`pg-fade${leaving ? " is-leaving" : ""}`}>
+        <ProjectsPageInner onOpenWorker={openWorker} />
+      </div>
+    </>
+  );
+}
+
+const pageFadeCss = `
+.pg-fade{animation:pg-in .22s ease-out both;transition:opacity .18s ease,transform .18s ease}
+.pg-fade.is-leaving{opacity:0;transform:translateY(6px);pointer-events:none}
+@keyframes pg-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.pg-fade{animation:none;transition:none}}
 `;

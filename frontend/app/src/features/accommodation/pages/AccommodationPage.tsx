@@ -387,7 +387,9 @@ function FacilityDetailView({
       </nav>
 
       <header className="fd-card fd-head">
-        <div className="fd-icon"><Building2 size={26} /></div>
+        <div className="fd-icon">
+          <img src="/images/accommodation_page.svg" width="56" height="56" alt="" />
+        </div>
         <div className="fd-head-main">
           <h1>{facility.name}</h1>
           <p className="fd-addr">{d.address}</p>
@@ -831,7 +833,7 @@ const css = `
 .am-table th{font-size:12.5px;padding-top:8px;padding-bottom:8px}
 .am-table td{padding-top:8px;padding-bottom:8px}
 .am-table small{font-size:12px;margin-top:1px}
-.am-table .sm-pill{font-size:12.5px;padding:2px 10px}
+.am-table .sm-pill{font-size:13px;padding:2px 10px}
 
 /* ---- Filters panel ---- */
 .am-btn-on{background:#f1f0eb !important}
@@ -846,9 +848,38 @@ const css = `
 
 /* ---- Clickable rows ---- */
 .am-row{cursor:pointer}
-.am-row:hover td,.am-row:focus-visible td{background:#f6f5f1}
-.am-row:focus-visible{outline:2px solid #166534;outline-offset:-2px}
-.sm-table-strong:hover{color: #166534}
+/* ---- Clickable rows ---- */
+
+.am-row {
+  cursor: pointer;
+}
+
+/* Grey background on row hover */
+.am-row:hover td,
+.am-row:focus-visible td {
+  background: #f6f5f1;
+}
+
+/* Green facility name on hover */
+.am-row:hover td:first-child,
+.am-row:hover td:first-child *,
+.am-row td:first-child a:hover,
+.am-row td:first-child button:hover {
+  color: #166534 !important;
+  transition: color 0.2s ease;
+}
+
+/* Keyboard focus */
+.am-row:focus-visible {
+  outline: 2px solid #166534;
+  outline-offset: -2px;
+}
+
+/* Normal facility name */
+.am-row td:first-child .sm-table-strong {
+  color: var(--text);
+  transition: color 0.2s ease;
+}
 
 /* ---- Add Facility modal ---- */
 .am-overlay{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(40,40,40,.38);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);overflow-y:auto}
@@ -897,10 +928,10 @@ const css = `
 
 .fd-card{background:#fff;border:1px solid var(--line);border-radius:12px}
 
-.fd-head{display:flex;align-items:flex-start;gap:16px;padding:16px 18px;margin-bottom:18px}
-.fd-icon{display:grid;place-items:center;flex:none;width:52px;height:52px;border-radius:12px;background:#d9f2dc;color:#166534}
+.fd-head{display:flex;align-items:flex-start;gap:16px;padding:18px 20px;margin-bottom:18px}
+.fd-icon{display:grid;place-items:center;flex:none}
 .fd-head-main{flex:1;min-width:0}
-.fd-head h1{margin:0;font-size:20px;font-weight:700;line-height:1.2;color:var(--text)}
+.fd-head h1{margin:0;font-size:20px;font-weight:600;line-height:1.2;color:var(--text);margin-bottom:6px}
 .fd-addr{margin:3px 0 10px;font-size:14px;color:var(--muted)}
 .fd-pills{display:flex;flex-wrap:wrap;gap:8px}
 .fd-head .fd-edit{display:inline-flex;align-items:center;justify-content:center;gap:10px;flex:none;height:32px;padding:0 12px;border:1px solid #dcdcd9 !important;border-radius:8px;background:#fff;color:var(--text);font:inherit;font-size:14px;font-weight:500;line-height:1;cursor:pointer;box-sizing:border-box}
@@ -908,12 +939,12 @@ const css = `
 .fd-head .fd-edit:hover{background:#f6f5f1}
 .fd-head .fd-edit:focus-visible{outline:2px solid #166534;outline-offset:2px}
 
-.fd-pill{display:inline-flex;align-items:center;gap:7px;padding:3px 12px;border-radius:999px;font-size:12.5px;font-weight:500;white-space:nowrap;background:#eeede8;color:var(--muted)}
+.fd-pill{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:999px;font-size:13px;font-weight:450;white-space:nowrap;background:#eeede8;color:var(--muted);margin-top:10px}
 .fd-pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
 .fd-pill.ok{background:#e4f4e6;color:#166534}
 .fd-pill.info{background:#e3ecfb;color:#1d4ed8}
-.fd-pill.warn{background:#f8efdc;color:#8a5a00}
-.fd-pill.bad{background:#fdecec;color:#c0392b}
+.fd-pill.warn{background:#f8efdc;color:#8a5a00;margin:0}
+.fd-pill.bad{background:#fdecec;color:#c0392b;margin:0}
 .fd-pill.muted{background:#eeede8;color:#55554f}
 
 .fd-tabs{display:flex;gap:4px;overflow-x:auto;border-bottom:1px solid var(--line);margin-bottom:14px}
@@ -932,7 +963,7 @@ const css = `
 .fd-scroll{overflow-x:auto}
 .fd-table{width:100%;border-collapse:collapse;font-size:14px;min-width:760px}
 .fd-table th{text-align:left;font-weight:500;font-size:13.5px;color:var(--muted);padding:12px 16px;border-bottom:1px solid var(--line);white-space:nowrap}
-.fd-table td{padding:11px 16px;color:var(--text);white-space:nowrap}
+.fd-table td{padding:8px 16px;color:var(--text);white-space:nowrap}
 .fd-table tbody tr+tr td{border-top:1px solid var(--line)}
 .fd-table strong{font-weight:600}
 .fd-muted{color:var(--muted)}

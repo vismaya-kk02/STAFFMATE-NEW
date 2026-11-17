@@ -54,6 +54,22 @@ const NAMED: Worker[] = [
   assigned("SM-1124", "Cristian Savchenko", "Line 3 Assembly", { coordinatorReport: true }),
   assigned("SM-1135", "Dejan Marković", "CNC Machining Hall", { coordinatorReport: true }),
   assigned("SM-1138", "Dragan Jovanović", "AutoParts Slovakia"),
+  // AutoParts Slovakia roster (so clicking a name on the Projects page opens the right profile)
+  assigned("SM-1113", "Dragan Pavlović", "AutoParts Slovakia"),
+  assigned("SM-1118", "Ion Kravets", "AutoParts Slovakia"),
+  assigned("SM-1114", "Ion Pavlović", "AutoParts Slovakia"),
+  assigned("SM-1142", "Maksym Koval", "AutoParts Slovakia"),
+  assigned("SM-1112", "Marko Nguyen", "AutoParts Slovakia"),
+  assigned("SM-1111", "Nikola Nguyen", "AutoParts Slovakia"),
+  assigned("SM-1115", "Tomislav Marković", "AutoParts Slovakia"),
+  assigned("SM-1110", "Viorel Moldovan", "AutoParts Slovakia"),
+  assigned("SM-1117", "Vlad Bratu", "AutoParts Slovakia"),
+  assigned("SM-1116", "Vlad Vasilev", "AutoParts Slovakia"),
+  // Other workers listed on the Projects → Daily work status page
+  assigned("SM-1122", "Petar Stoyanov", "Warehouse Ops"),
+  assigned("SM-1123", "Vasile Jovanović", "Warehouse Ops"),
+  assigned("SM-1126", "Vasile Kravets", "Warehouse Ops"),
+  assigned("SM-1121", "Vlad Moldovan", "Warehouse Ops"),
   available("SM-1154", "Andriy Ionescu", JANA),
   available("SM-1149", "Anh Popa", PETER, { project: "Line 3 Assembly", blocked: true, sp: "No evidence" }),
   available("SM-0754", "Dmytro Kovalenko", PETER, { sp: "Uploaded, awaiting verification" }),
@@ -108,6 +124,12 @@ const TABS: { key: string; label: string; match: (w: Worker) => boolean }[] = [
 
 /** Turn the ?tab= value from the URL into a valid tab key (falls back to "all"). */
 const tabFromUrl = (k: string | null) => (TABS.some((t) => t.key === k) ? (k as string) : "all");
+
+/** Resets the window and any scrolled container (the app shell may scroll inside <main>, not the window). */
+const resetScroll = () => {
+  window.scrollTo(0, 0);
+  document.querySelectorAll<HTMLElement>("*").forEach((el) => { if (el.scrollTop > 0) el.scrollTop = 0; });
+};
 
 /* ---------- Adapter for the existing Add Worker dialog ---------- */
 // Only the fields of your dialog's WorkerForm that this page needs.
@@ -177,6 +199,25 @@ const DETAIL_OVERRIDES: Record<string, Partial<WorkerDetailInfo>> = {
     dob: "14 Mar 1991", nationality: "Ukraine", role: "Production Operator", telephone: "+421 900 111 001",
     country: "Ukraine", empStart: "03 Feb 2025",
   },
+  // AutoParts Slovakia roster (matches Projects → project detail → Workers)
+  "SM-1113": {
+    role: "Machine Operator", nationality: "Bulgaria", country: "Bulgaria",
+    empStart: "21 Jul 2024", assignStart: "21 Jul 2024",
+  },
+  "SM-1118": { role: "Machine Operator", empStart: "18 Sep 2025", assignStart: "18 Sep 2025" },
+  "SM-1114": { role: "Packer", empStart: "17 Mar 2025", assignStart: "17 Mar 2025" },
+  "SM-1142": { role: "Packer", empStart: "03 Aug 2026", assignStart: "03 Aug 2026" },
+  "SM-1112": { role: "Production Operator", empStart: "14 Jul 2025", assignStart: "14 Jul 2025" },
+  "SM-1111": { role: "Machine Operator", empStart: "12 Feb 2024", assignStart: "12 Feb 2024" },
+  "SM-1115": { role: "Production Operator", empStart: "20 Jun 2025", assignStart: "20 Jun 2025" },
+  "SM-1110": { role: "Packer", empStart: "19 Mar 2024", assignStart: "19 Mar 2024" },
+  "SM-1117": { role: "Assembler", empStart: "22 Sep 2024", assignStart: "22 Sep 2024" },
+  "SM-1116": { role: "Forklift Operator", empStart: "14 Jun 2024", assignStart: "14 Jun 2024" },
+  // Other workers from Projects → Daily work status
+  "SM-1122": { role: "Forklift Operator" },
+  "SM-1123": { role: "Forklift Operator" },
+  "SM-1126": { role: "Packer" },
+  "SM-1121": { role: "Machine Operator" },
 };
 
 const ROLES = ["Warehouse Associate", "Forklift Operator", "CNC Operator", "Line Assembler", "Packer", "Quality Inspector"];
@@ -420,6 +461,14 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
   const [termNote, setTermNote] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
 
+  // Open at the top (the app shell may have been scrolled down on the list / Projects page)
+  useEffect(() => {
+    resetScroll();
+    const t = setTimeout(resetScroll, 0);
+    const raf = requestAnimationFrame(() => requestAnimationFrame(resetScroll));
+    return () => { clearTimeout(t); cancelAnimationFrame(raf); };
+  }, [worker.id]);
+
   const stage = STAGE_OF[worker.status];
   const initials = worker.name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
   const subtitle = [d.role, d.nationality].filter((v) => v && v !== "—").join(" · ");
@@ -449,7 +498,7 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
   const pendingDays = sinceIso ? daysSince(sinceIso) : null;
 
   return (
-    <>
+    <div className="wk-enter">
       <nav className="wk-crumb" aria-label="Breadcrumb">
         <Link to="/admin">Home</Link>
         <ChevronRight size={14} />
@@ -479,29 +528,29 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
           {subtitle && <p>{subtitle}</p>}
         </div>
         <div className="wd-head-btns">
-  <button type="button" className="sm-btn sm-btn-outline" onClick={() => setTermOpen(true)}>
-    <img
-      src="/images/termination.svg"
-      alt=""
-      aria-hidden="true"
-      width={16}
-      height={16}
-      style={{ display: "block", flex: "none" }}
-    />{" "}
-    Begin termination
-  </button>
-  <button type="button" className="sm-btn sm-btn-outline" onClick={() => setEditOpen(true)}>
-    <img
-      src="/images/edit.svg"
-      alt=""
-      aria-hidden="true"
-      width={16}
-      height={16}
-      style={{ display: "block", flex: "none" }}
-    />{" "}
-    Edit Profile
-  </button>
-</div>
+          <button type="button" className="sm-btn sm-btn-outline" onClick={() => setTermOpen(true)}>
+            <img
+              src="/images/termination.svg"
+              alt=""
+              aria-hidden="true"
+              width={16}
+              height={16}
+              style={{ display: "block", flex: "none" }}
+            />{" "}
+            Begin termination
+          </button>
+          <button type="button" className="sm-btn sm-btn-outline" onClick={() => setEditOpen(true)}>
+            <img
+              src="/images/edit.svg"
+              alt=""
+              aria-hidden="true"
+              width={16}
+              height={16}
+              style={{ display: "block", flex: "none" }}
+            />{" "}
+            Edit Profile
+          </button>
+        </div>
       </section>
 
       <section className="sm-card wd-sum">
@@ -540,34 +589,35 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
         </div>
       </section>
 
-      <section className="sm-card wd-status">
-        <h3 className="wd-status-title"><TrendingUp size={16} /> Worker status and pending action</h3>
-        {kv([
-          ["Worker status", (
-            <span key="s">
-              <WPill tone={STATUS_PILL[worker.status]}>{worker.status}</WPill>
-              <span className="wd-status-note">calculated from dated records</span>
+      {/* Shown only when there is a pending action (hidden for workers already assigned to a project) */}
+      {hint && (
+        <section className="sm-card wd-status">
+          <h3 className="wd-status-title"><TrendingUp size={16} /> Worker status and pending action</h3>
+          {kv([
+            ["Worker status", (
+              <span key="s">
+                <WPill tone={STATUS_PILL[worker.status]}>{worker.status}</WPill>
+                <span className="wd-status-note">calculated from dated records</span>
+              </span>
+            )],
+            ["Employment start", d.empStart],
+          ])}
+          <div className="wd-pending">
+            <img
+              src="/images/pending_actions.svg"
+              alt=""
+              aria-hidden="true"
+              width={16}
+              height={16}
+              style={{ display: "block", flex: "none" }}
+            />
+            <span>
+              <b>Pending action: {pendingLabel(worker)}</b> — {hint}
+              {pendingDays !== null ? ` Since ${d.empStart} · ${pendingDays} days.` : ""}
             </span>
-          )],
-          ["Employment start", d.empStart],
-        ])}
-        {hint && (
-  <div className="wd-pending">
-    <img
-      src="/images/pending_actions.svg"
-      alt=""
-      aria-hidden="true"
-      width={16}
-      height={16}
-      style={{ display: "block", flex: "none" }}
-    />
-    <span>
-      <b>Pending action: {pendingLabel(worker)}</b> — {hint}
-      {pendingDays !== null ? ` Since ${d.empStart} · ${pendingDays} days.` : ""}
-    </span>
-  </div>
-)}
-      </section>
+          </div>
+        </section>
+      )}
 
       <div className="wd-tabs" role="tablist">
         {DETAIL_TABS.map((t) => (
@@ -784,7 +834,7 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
           }}
         />
       )}
-    </>
+    </div>
   );
 }
 
@@ -806,7 +856,7 @@ export default function WorkersPage(): React.JSX.Element {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [compact, setCompact] = useState(false);
-  // Opens straight on the worker named in ?worker= (so Documents -> worker profile works)
+  // Opens straight on the worker named in ?worker= (so Documents / Projects -> worker profile works)
   const [openId, setOpenId] = useState<string | null>(
     () => INITIAL_WORKERS.find((w) => w.id === urlWorker || w.name === urlWorker)?.id ?? null,
   );
@@ -900,7 +950,7 @@ export default function WorkersPage(): React.JSX.Element {
   ];
 
   return (
-    <>
+    <div className="wk-enter">
       <style>{css}</style>
 
       <nav className="wk-crumb" aria-label="Breadcrumb">
@@ -1004,7 +1054,7 @@ export default function WorkersPage(): React.JSX.Element {
       {addOpen && (
         <AddWorkerPage open onClose={() => setAddOpen(false)} onSaved={handleSaved} />
       )}
-    </>
+    </div>
   );
 }
 
@@ -1013,6 +1063,11 @@ export default function WorkersPage(): React.JSX.Element {
  * components/WorkerFilters.tsx. Colours use the theme variables from AdminWorkspace.
  */
 const css = `
+/* smooth page-in (list and worker profile) */
+.wk-enter{animation:wk-in .22s ease-out both}
+@keyframes wk-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.wk-enter{animation:none}}
+
 .wk-crumb{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);margin-bottom:8px}
 .wk-crumb b{color:var(--text);font-weight:600}
 .wk-crumb a:hover{color:var(--text)}
@@ -1050,7 +1105,7 @@ html[data-theme="dark"] .sm-pill.info{background:#1f3350;color:#9db8ff}
 
 /* ---- Worker detail page ---- */
 .wd-head{display:flex;align-items:center;gap:12px;padding:22px 18px;margin-bottom:10px}
-.wd-avatar{flex:none;display:grid;place-items:center;width:44px;height:44px;border-radius:10px;background:var(--green-soft);color:var(--green);font-size:16px;font-weight:700}
+.wd-avatar{flex:none;display:grid;place-items:center;width:56px;height:56px;border-radius:10px;background: #cdefcb;color: #04210b; font-size:16px;font-weight:700}
 .wd-who{flex:1;min-width:0}
 .wd-who h1{margin:0;font-size:20px;line-height:1.2;font-weight:600;color:var(--text)}
 .wd-who h1 span{font-size:14px;font-weight:500;color:var(--muted)}
