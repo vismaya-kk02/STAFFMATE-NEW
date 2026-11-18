@@ -481,20 +481,26 @@ const fixCss = `
 `;
 
 /* ---------- Daily work status tab ---------- */
-function DailyWorkStatus({ holidayRef, onOpenWorker }: {
+function DailyWorkStatus({ holidayRef, onOpenWorker, initial, onConsumed }: {
   holidayRef: React.MutableRefObject<(() => void) | null>;
   onOpenWorker: (w: WorkerRef) => void;
+  initial?: { project: string; day: string } | null;
+  onConsumed?: () => void;
 }): React.JSX.Element {
   const projectNames = PROJECTS.filter((p) => p.status !== "Completed").map((p) => p.name);
-  const [project, setProject] = useState("AutoParts Slovakia");
-  const [day, setDay] = useState(DEFAULT_DAY);
+  const [project, setProject] = useState(initial?.project ?? "AutoParts Slovakia");
+  const [day, setDay] = useState(initial?.day ?? DEFAULT_DAY);
   const [marks, setMarks] = useState<Record<string, Mark>>(() =>
-    buildMarks("AutoParts Slovakia", DEFAULT_DAY, [], SEED_CONFIRMATIONS),
+    buildMarks(initial?.project ?? "AutoParts Slovakia", initial?.day ?? DEFAULT_DAY, [], SEED_CONFIRMATIONS),
   );
   const [confirmations, setConfirmations] = useState<Record<string, Confirmation>>(SEED_CONFIRMATIONS);
   const [state, setState] = useState<DayState>(
-    SEED_CONFIRMATIONS[keyOf("AutoParts Slovakia", DEFAULT_DAY)] ? "confirmed" : "not_started",
+    SEED_CONFIRMATIONS[keyOf(initial?.project ?? "AutoParts Slovakia", initial?.day ?? DEFAULT_DAY)]
+      ? "confirmed"
+      : "not_started",
   );
+  // The initial project/day is only used on the first render
+  useEffect(() => { onConsumed?.(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [reviews, setReviews] = useState<ReviewItem[]>(INITIAL_REVIEWS);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [holidayOpen, setHolidayOpen] = useState(false);
@@ -785,7 +791,19 @@ function DailyWorkStatus({ holidayRef, onOpenWorker }: {
           {reviews.map((r) => (
             <div key={r.id} className="dw-review-row">
               <div>
-                <h3>{r.worker} — {r.days} day(s) on {r.project}</h3>
+                <h3>
+                  <button
+                    type="button"
+                    className="dw-review-link"
+                    onClick={() => {
+                      const w = workersFor(r.project).find((x) => x.name === r.worker);
+                      onOpenWorker({ name: r.worker, code: w?.code, role: w?.role, project: r.project });
+                    }}
+                  >
+                    {r.worker}
+                  </button>
+                  <span>— {r.days} day(s) on {r.project}</span>
+                </h3>
                 <small>{r.from} to {r.to} · recorded as not eligible, registration now effective</small>
               </div>
               <div className="dw-review-btns">
@@ -1000,13 +1018,300 @@ const buildMonthBars = (m: MonthData): DayBar[] => {
 /** 21/22 -> "95.5%", 75.0 -> "75%", 100.0 -> "100%" */
 const pct = (n: number, d: number) => (d > 0 ? `${parseFloat(((n / d) * 100).toFixed(1))}%` : "—");
 
-function StatisticsTab({ exportRef, onSeeWhich }: {
+/* ---------- "All assigned worker-days" modal (Statistics tab) ---------- */
+type StatKind = "assigned" | "worked" | "dnw" | "ne";
+interface AssignedRow { worker: string; project: string; days: number; dates: string; sp?: boolean; code?: string; role?: string }
+
+function AssignedModal({ title, rows, onClose, onOpenWorker }: {
+  title: string;
+  rows: AssignedRow[];
+  onClose: () => void;
+  onOpenWorker?: (r: AssignedRow) => void;
+}): React.JSX.Element {
+  // Close on Escape + lock page scroll while open
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
+  }, [onClose]);
+
+  return createPortal(
+    <>
+      <style>{modalCss}{assignedCss}</style>
+      <div className="ap-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+        <div className="ap-modal as-modal" role="dialog" aria-modal="true" aria-labelledby="as-title">
+          <div className="ap-head">
+            <h2 id="as-title">{title}</h2>
+            <button type="button" className="ap-close" aria-label="Close" onClick={onClose}>
+              <X size={20} strokeWidth={1.5} />
+            </button>
+          </div>
+
+          {rows.length === 0 ? (
+            <p className="as-empty">No workers.</p>
+          ) : (
+          <div className="as-scroll">
+            <table className="as-table">
+              <thead>
+                <tr><th>Worker</th><th>Project</th><th>Worker-days</th><th>Dates</th></tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={`${r.project}|${r.worker}|${i}`}>
+                    <td>
+                      {onOpenWorker ? (
+                        <button type="button" className="as-worker" onClick={() => onOpenWorker(r)}>
+                          <strong>{r.worker}</strong>
+                        </button>
+                      ) : (
+                        <strong>{r.worker}</strong>
+                      )}
+                      {r.sp && <span className="dw-sp as-sp">SP</span>}
+                    </td>
+                    <td>{r.project}</td>
+                    <td>{r.days}</td>
+                    <td>{r.dates}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          )}
+        </div>
+      </div>
+    </>,
+    document.body,
+  );
+}
+
+const assignedCss = `
+.ap-modal.as-modal{max-width:650px;padding:28px 20px 22px;border-radius:20px}
+.as-modal .ap-head{margin-bottom:22px;padding:0 12px}
+.as-modal .ap-head h2{font-size:18px}
+.as-scroll{max-height:min(55vh,560px);overflow-y:auto;padding-right:2px}
+.as-scroll::-webkit-scrollbar{width:6px}
+.as-scroll::-webkit-scrollbar-track{background:transparent}
+.as-scroll::-webkit-scrollbar-thumb{background:#cfcdc6;border-radius:6px}
+.as-scroll::-webkit-scrollbar-thumb:hover{background:#b5b3ab}
+.as-scroll::-webkit-scrollbar-button{display:none;width:0;height:0}
+@supports not selector(::-webkit-scrollbar){.as-scroll{scrollbar-width:thin;scrollbar-color:#cfcdc6 transparent}}
+.as-table{width:100%;border-collapse:collapse;font-size:16px;color:var(--text,#1c1c1a)}
+.as-table th{position:sticky;top:0;background:#fff;text-align:left;font-weight:600;font-size:12px;color:var(--muted,#6b6b66);padding:14px 16px 12px;border-bottom:1px solid var(--line,#dedcd5);white-space:nowrap}
+.as-table td{padding:8px 16px;border-bottom:1px solid var(--line,#dedcd5);font-size:13px;white-space:nowrap}
+.as-table tbody tr:last-child td{border-bottom:0}
+.as-table td strong{font-weight:600}
+.as-table th:nth-child(1),.as-table td:nth-child(1){width:30%}
+.as-table th:nth-child(2),.as-table td:nth-child(2){width:30%}
+.as-table th:nth-child(3),.as-table td:nth-child(3){width:20%}
+.as-empty{margin:0 12px 6px;color:var(--muted,#6b6b66);font-size:14px}
+.as-sp{margin-left:8px;vertical-align:middle;font-size:10px;padding:1px 7px}
+.as-worker{display:inline;padding:0;border:0;background:none;font:inherit;color:inherit;text-align:left;cursor:pointer}
+.as-worker:hover strong{color:var(--green,#1a6b2f)}
+.as-worker:focus-visible{outline:2px solid var(--green,#1a6b2f);outline-offset:3px;border-radius:4px}
+@media (max-width:640px){.as-table{font-size:12px}.as-scroll{overflow-x:auto}}
+`;
+
+/* ---------- "Unconfirmed project-days" modal (See which button) ---------- */
+interface UnconfirmedRow { project: string; iso: string }
+
+function UnconfirmedModal({ rows, onClose, onOpenRecord }: {
+  rows: UnconfirmedRow[];
+  onClose: () => void;
+  onOpenRecord: (project: string, iso: string) => void;
+}): React.JSX.Element {
+  // Close on Escape + lock page scroll while open
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
+  }, [onClose]);
+
+  return createPortal(
+    <>
+      <style>{modalCss}{unconfirmedCss}</style>
+      <div className="ap-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+        <div className="ap-modal uc-modal" role="dialog" aria-modal="true" aria-labelledby="uc-title">
+          <div className="ap-head">
+            <h2 id="uc-title">Unconfirmed project-days</h2>
+            <button type="button" className="ap-close" aria-label="Close" onClick={onClose}>
+              <X size={20} strokeWidth={1.5} />
+            </button>
+          </div>
+
+          {rows.length === 0 ? (
+            <p className="uc-empty">No unconfirmed project-days.</p>
+          ) : (
+            <table className="uc-table">
+              <thead>
+                <tr><th>Project</th><th>Date</th><th aria-label="Actions" /></tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={`${r.project}|${r.iso}`}>
+                    <td>{r.project}</td>
+                    <td>{fmtDate(r.iso)}</td>
+                    <td className="uc-act">
+                      <button type="button" className="uc-open" onClick={() => onOpenRecord(r.project, r.iso)}>
+                        Open record
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </>,
+    document.body,
+  );
+}
+
+const unconfirmedCss = `
+.ap-modal.uc-modal{max-width:680px;padding:26px 34px 30px;border-radius:20px}
+.uc-modal .ap-head{margin-bottom:26px}
+.uc-modal .ap-head h2{font-size:16px;font-weight:600}
+.uc-table{width:100%;border-collapse:collapse;color:var(--text,#1c1c1a)}
+.uc-table th{text-align:left;font-weight:500;font-size:14px;color:var(--muted,#6b6b66);padding:4px 18px;border-bottom:1px solid var(--line,#dedcd5)}
+.uc-table td{padding:10px 18px;font-size:14px;border-bottom:1px solid var(--line,#dedcd5)}
+.uc-table tbody tr:last-child td{border-bottom:0}
+.uc-table th:nth-child(1),.uc-table td:nth-child(1){width:40%}
+.uc-table th:nth-child(2),.uc-table td:nth-child(2){width:36%}
+.uc-act{text-align:left}
+.uc-open{background:none;border:0;padding:0;font-size:14px;font-weight:500;color:var(--green,#1a6b2f);cursor:pointer}
+.uc-open:hover{text-decoration:none}
+.uc-open:focus-visible{outline:2px solid var(--green,#1a6b2f);outline-offset:3px;border-radius:4px}
+.uc-empty{margin:0 0 6px;color:var(--muted,#6b6b66);font-size:15px}
+@media (max-width:640px){.ap-modal.uc-modal{padding:22px 16px}.uc-table td{font-size:15px}.uc-open{font-size:14px}}
+`;
+
+/* ---------- "Joiners" / "Leavers" modal (Joiners and leavers card) ---------- */
+type MoveKind = "joiners" | "leavers";
+interface MovementRow { worker: string; iso: string; project: string; note?: string; sp?: boolean; code?: string; role?: string }
+
+const PINNED_JOINERS_7D: MovementRow[] = [
+  { worker: "Maksym Ionescu", iso: "2026-09-02", project: "Line 3 Assembly" },
+  { worker: "Nikola Ionescu", iso: "2026-09-03", project: "AutoParts Slovakia", sp: true },
+  { worker: "Anh Popa", iso: "2026-09-07", project: "Line 3 Assembly", sp: true, code: "SM-1149", role: "Packer" },
+];
+const PINNED_LEAVERS_7D: MovementRow[] = [
+  { worker: "Viorel Dimitrov", iso: "2026-09-03", project: "Warehouse Ops" },
+];
+
+function MovementModal({ title, rows, onClose, onOpenWorker }: {
+  title: string;
+  rows: MovementRow[];
+  onClose: () => void;
+  onOpenWorker: (r: MovementRow) => void;
+}): React.JSX.Element {
+  // Close on Escape + lock page scroll while open
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
+  }, [onClose]);
+
+  return createPortal(
+    <>
+      <style>{modalCss}{assignedCss}</style>
+      <div className="ap-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+        <div className="ap-modal as-modal" role="dialog" aria-modal="true" aria-labelledby="mv-title">
+          <div className="ap-head">
+            <h2 id="mv-title">{title}</h2>
+            <button type="button" className="ap-close" aria-label="Close" onClick={onClose}>
+              <X size={20} strokeWidth={1.5} />
+            </button>
+          </div>
+
+          {rows.length === 0 ? (
+            <p className="as-empty">No workers.</p>
+          ) : (
+            <div className="as-scroll">
+              <table className="as-table">
+                <thead>
+                  <tr><th>Worker</th><th>Date</th><th>Note</th></tr>
+                </thead>
+                <tbody>
+                  {rows.map((r, i) => (
+                    <tr key={`${r.worker}|${r.iso}|${i}`}>
+                      <td>
+                        <button type="button" className="as-worker" onClick={() => onOpenWorker(r)}>
+                          <strong>{r.worker}</strong>
+                        </button>
+                        {r.sp && <span className="dw-sp as-sp">SP</span>}
+                      </td>
+                      <td>{fmtDate(r.iso)}</td>
+                      <td>{r.note || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </>,
+    document.body,
+  );
+}
+
+/* Sample workers behind the small "Did not work — by reason" counts (Last 7 days, whole company) */
+const PINNED_7D: Record<string, AssignedRow[]> = {
+  "Annual leave": [
+    { worker: "Cristian Savchenko", project: "Line 3 Assembly", days: 1, dates: "02 Sep" },
+    { worker: "Ion Kravets", project: "AutoParts Slovakia", days: 1, dates: "03 Sep" },
+    { worker: "Nikola Nguyen", project: "AutoParts Slovakia", days: 1, dates: "03 Sep" },
+    { worker: "Andriy Le", project: "Line 3 Assembly", days: 1, dates: "07 Sep" },
+  ],
+  "Sickness / sick leave": [
+    { worker: "Andrei Rusu", project: "Warehouse Ops", days: 1, dates: "02 Sep" },
+  ],
+  "Medical appointment": [
+    { worker: "Maksym Bratu", project: "Warehouse Ops", days: 1, dates: "02 Sep" },
+  ],
+  "Other": [
+    { worker: "Petar Stoyanov", project: "Line 3 Assembly", days: 1, dates: "04 Sep" },
+  ],
+};
+
+function StatisticsTab({ exportRef, onOpenRecord, onOpenWorker }: {
   exportRef: React.MutableRefObject<(() => void) | null>;
-  onSeeWhich: () => void;
+  onOpenRecord: (project: string, iso: string) => void;
+  onOpenWorker: (w: WorkerRef) => void;
 }): React.JSX.Element {
   const [scope, setScope] = useState("Whole company");
   const [range, setRange] = useState<Range>("Last 7 days");
   const [monthKey, setMonthKey] = useState(MONTHS[0].key);
+  const [openKind, setOpenKind] = useState<StatKind | null>(null);
+  const [showUnc, setShowUnc] = useState(false);
+  const [openReason, setOpenReason] = useState<string | null>(null);
+  const [openMove, setOpenMove] = useState<MoveKind | null>(null);
+
+  // Clicking a worker name in a worker-days dialog opens that worker's profile page
+  const openWorkerFromRow = (r: AssignedRow) => {
+    setOpenKind(null);
+    setOpenReason(null);
+    onOpenWorker({ name: r.worker, code: r.code, role: r.role, project: r.project });
+  };
+
+  // Clicking a project name in "Projects compared with the company" switches the scope and jumps to the top
+  const selectScope = (name: string) => {
+    setScope(name);
+    const top = () => {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      // the app shell may scroll inside a container instead of the window
+      document.querySelectorAll<HTMLElement>("*").forEach((el) => {
+        if (el.scrollTop > 0) el.scrollTo({ top: 0, behavior: "smooth" });
+      });
+    };
+    requestAnimationFrame(top);
+  };
 
   const month = MONTHS.find((m) => m.key === monthKey) ?? MONTHS[0];
   const monthBars = useMemo(() => buildMonthBars(month), [month]);
@@ -1017,6 +1322,74 @@ function StatisticsTab({ exportRef, onSeeWhich }: {
   const company = sumCounts(rows.map((r) => r.c));
   const view = scope === "Whole company" ? company : (rows.find((r) => r.name === scope)?.c ?? ZERO);
   const share = company.assigned > 0 ? view.assigned / company.assigned : 0;
+
+  // Unconfirmed project-days behind the "See which" button (follows scope + period)
+  const uncRows: UnconfirmedRow[] = rows
+    .filter((r) => (scope === "Whole company" || r.name === scope) && r.c.incomplete > 0)
+    .flatMap((r): UnconfirmedRow[] => {
+      if (range === "Yesterday") return [{ project: r.name, iso: DEFAULT_DAY }];
+      if (range === "Last 7 days") {
+        return [{ project: r.name, iso: r.name === "Warehouse Ops" ? "2026-09-07" : DEFAULT_DAY }];
+      }
+      if (month.incDay == null) return [];
+      const p2 = (n: number) => String(n).padStart(2, "0");
+      return [{ project: r.name, iso: `${month.year}-${p2(month.month + 1)}-${p2(month.incDay)}` }];
+    })
+    .sort((a, b) => a.iso.localeCompare(b.iso));
+
+  // Rows for the "All assigned worker-days" dialog (follows the selected scope and period)
+  const periodDates =
+    range === "Yesterday"
+      ? "08 Sep"
+      : range === "Last 7 days"
+        ? "02 Sep – 08 Sep"
+        : (() => {
+            const mon = new Date(month.year, month.month, 1).toLocaleDateString("en-GB", { month: "short" });
+            const last = new Date(month.year, month.month + 1, 0).getDate();
+            return `01 ${mon} – ${String(last).padStart(2, "0")} ${mon}`;
+          })();
+
+  // Rows for the detail dialogs (follow the selected scope and period, and add up to the card numbers)
+  const rowsFor = (kind: StatKind): AssignedRow[] =>
+    rows
+      .filter((r) => (scope === "Whole company" || r.name === scope) && r.c.assigned > 0)
+      .flatMap((r): AssignedRow[] => {
+        const roster = workersFor(r.name);
+        const flagged = roster.filter((w) => w.notEligible);
+        const mk = (w: DayWorker, days: number): AssignedRow =>
+          ({ worker: w.name, project: r.name, days, dates: periodDates, sp: kind === "ne", code: w.code, role: w.role });
+
+        if (kind === "assigned") {
+          if (range === "Yesterday") return roster.map((w) => mk(w, 1));
+          const parts = apportion(r.c.assigned, roster.map(() => 1));
+          return roster.map((w, i) => mk(w, parts[i]));
+        }
+        if (range === "Yesterday") {
+          // not-eligible workers first, then the did-not-work ones; everybody else worked
+          const neW = [...flagged, ...roster.filter((w) => !w.notEligible)].slice(0, r.c.ne);
+          const rest = roster.filter((w) => !neW.includes(w));
+          const list = kind === "ne" ? neW : kind === "dnw" ? rest.slice(0, r.c.dnw) : rest.slice(r.c.dnw);
+          return list.map((w) => mk(w, 1));
+        }
+        const pool = kind === "ne" ? (flagged.length ? flagged : roster) : roster.filter((w) => !w.notEligible);
+        const total = kind === "ne" ? r.c.ne : kind === "dnw" ? r.c.dnw : r.c.worked;
+        const parts = apportion(total, pool.map(() => 1));
+        return pool.map((w, i) => mk(w, parts[i])).filter((x) => x.days > 0);
+      })
+      .sort((x, y) => x.project.localeCompare(y.project) || x.worker.localeCompare(y.worker));
+
+  const periodTitle =
+    range === "Yesterday"
+      ? "Yesterday — 08 Sep 2026"
+      : range === "Last 7 days"
+        ? "Last 7 days — 02 Sep to 08 Sep 2026"
+        : month.label;
+  const kindLabel: Record<StatKind, string> = {
+    assigned: "All assigned worker-days",
+    worked: "Worked",
+    dnw: "Did not work",
+    ne: "Not eligible — Social Insurance not verified",
+  };
 
   // Chart bars
   const scaledBars: DayBar[] = (() => {
@@ -1046,11 +1419,85 @@ function StatisticsTab({ exportRef, onSeeWhich }: {
     ? apportion(view.dnw, weights.map(([, w]) => w)).map((n, i) => [weights[i][0], n] as [string, number])
     : [];
 
+  // Workers behind each count in "Did not work — by reason" (follows scope + period, adds up to the count)
+  const dateLabels: string[] = (() => {
+    if (range === "Yesterday") return ["08 Sep"];
+    if (range === "Last 7 days") return WEEK_BARS.map((b) => b.label);
+    const mon = new Date(month.year, month.month, 1).toLocaleDateString("en-GB", { month: "short" });
+    const last = new Date(month.year, month.month + 1, 0).getDate();
+    return Array.from({ length: last }, (_, i) => `${String(i + 1).padStart(2, "0")} ${mon}`);
+  })();
+
+  const reasonRows = (reason: string): AssignedRow[] => {
+    const pinned = range === "Last 7 days" && scope === "Whole company" ? PINNED_7D : null;
+    if (pinned && pinned[reason]) return pinned[reason];
+    const pinnedAll = pinned ? Object.values(pinned).flat() : [];
+
+    // one slot per did-not-work worker-day of the project(s) in scope
+    const slots: AssignedRow[] = rows
+      .filter((r) => scope === "Whole company" || r.name === scope)
+      .flatMap((r) => {
+        const pool = workersFor(r.name).filter((w) => !w.notEligible);
+        const n = Math.max(0, r.c.dnw - pinnedAll.filter((x) => x.project === r.name).length);
+        return Array.from({ length: n }, (_, k): AssignedRow => ({
+          worker: pool[k % pool.length].name,
+          project: r.name,
+          days: 1,
+          dates: dateLabels[(k * 7 + Math.floor(k / pool.length) * 3) % dateLabels.length],
+        }));
+      });
+
+    let list = slots;
+    if (!pinned) {
+      // hand the slots to the reasons in order so every list matches its count
+      const idx = reasons.findIndex(([name]) => name === reason);
+      const start = reasons.slice(0, Math.max(0, idx)).reduce((a, [, n]) => a + n, 0);
+      list = slots.slice(start, start + (reasons[idx]?.[1] ?? 0));
+    }
+    return [...list].sort(
+      (a, b) => a.dates.localeCompare(b.dates) || a.project.localeCompare(b.project) || a.worker.localeCompare(b.worker),
+    );
+  };
+
   // Headcount + joiners/leavers
   const hc = range === "Yesterday" ? HC_YDAY : range === "Last 7 days" ? HC_7D : month.hc;
   const joiners = Math.round(hc.joiners * share);
   const leavers = Math.round(hc.leavers * share);
   const net = joiners - leavers;
+
+  // Workers behind the Joiners / Leavers counts (follows scope + period, adds up to the count)
+  const movementRows = (kind: MoveKind): MovementRow[] => {
+    const n = kind === "joiners" ? joiners : leavers;
+    if (n <= 0) return [];
+    if (range === "Last 7 days" && scope === "Whole company") {
+      return (kind === "joiners" ? PINNED_JOINERS_7D : PINNED_LEAVERS_7D).slice(0, n);
+    }
+    const dates: string[] =
+      range === "Yesterday"
+        ? [DEFAULT_DAY]
+        : range === "Last 7 days"
+          ? Array.from({ length: 7 }, (_, i) => addDays("2026-09-02", i))
+          : Array.from({ length: new Date(month.year, month.month + 1, 0).getDate() }, (_, i) =>
+              toIso(new Date(month.year, month.month, i + 1)));
+
+    const inScope = rows.filter((r) => scope === "Whole company" || r.name === scope);
+    const active = inScope.filter((r) => r.c.assigned > 0);
+    const seen = new Set<string>();
+    const pool = (active.length ? active : inScope)
+      .flatMap((r) => workersFor(r.name).map((w) => ({ w, project: r.name })))
+      .filter(({ w }) => (seen.has(w.name) ? false : (seen.add(w.name), true)));
+
+    return Array.from({ length: n }, (_, i): MovementRow => {
+      const { w, project } = pool[(kind === "joiners" ? i : pool.length - 1 - i) % pool.length];
+      const iso = dates[Math.min(dates.length - 1, Math.floor(((i + 0.5) * dates.length) / n))];
+      return { worker: w.name, iso, project, sp: !!w.notEligible, code: w.code, role: w.role };
+    }).sort((a, b) => a.iso.localeCompare(b.iso) || a.worker.localeCompare(b.worker));
+  };
+
+  const openWorkerFromMove = (r: MovementRow) => {
+    setOpenMove(null);
+    onOpenWorker({ name: r.worker, code: r.code, role: r.role, project: r.project });
+  };
 
   const summary =
     range === "Yesterday"
@@ -1072,11 +1519,11 @@ function StatisticsTab({ exportRef, onSeeWhich }: {
     URL.revokeObjectURL(url);
   };
 
-  const cards = [
-    { label: "Assigned worker-days", value: view.assigned, caption: "On confirmed records" },
-    { label: "Worked", value: view.worked, caption: `${pct(view.worked, view.assigned)} of assigned` },
-    { label: "Did not work", value: view.dnw, caption: `${pct(view.dnw, view.assigned)} of assigned` },
-    { label: "Not eligible (SP)", value: view.ne, caption: "Never counted as worked", danger: true },
+  const cards: { label: string; value: number; caption: string; danger?: boolean; kind?: StatKind }[] = [
+    { label: "Assigned worker-days", value: view.assigned, caption: "On confirmed records", kind: "assigned" },
+    { label: "Worked", value: view.worked, caption: `${pct(view.worked, view.assigned)} of assigned`, kind: "worked" },
+    { label: "Did not work", value: view.dnw, caption: `${pct(view.dnw, view.assigned)} of assigned`, kind: "dnw" },
+    { label: "Not eligible (SP)", value: view.ne, caption: "Never counted as worked", danger: true, kind: "ne" },
     { label: "Incomplete project-days", value: view.incomplete, caption: "Unconfirmed records", danger: true },
   ];
 
@@ -1119,7 +1566,7 @@ function StatisticsTab({ exportRef, onSeeWhich }: {
             {view.incomplete} project-day record(s) in this period are not confirmed and are shown as incomplete — they
             are not treated as “everyone worked”.
           </span>
-          <button type="button" onClick={onSeeWhich}>See which</button>
+          <button type="button" onClick={() => setShowUnc(true)}>See which</button>
         </div>
       )}
 
@@ -1127,7 +1574,18 @@ function StatisticsTab({ exportRef, onSeeWhich }: {
         {cards.map((s) => (
           <div key={s.label} className="sm-stat">
             <div className="sm-stat-title">{s.label}</div>
-            <div className={`sm-stat-value${s.danger ? " is-danger" : ""}`}>{s.value}</div>
+            {s.kind ? (
+              <button
+                type="button"
+                className={`sm-stat-value st-link${s.danger ? " is-danger" : ""}`}
+                title="Show the workers behind this number"
+                onClick={() => setOpenKind(s.kind!)}
+              >
+                {s.value}
+              </button>
+            ) : (
+              <div className={`sm-stat-value${s.danger ? " is-danger" : ""}`}>{s.value}</div>
+            )}
             <div className="sm-stat-caption">{s.caption}</div>
           </div>
         ))}
@@ -1161,7 +1619,10 @@ function StatisticsTab({ exportRef, onSeeWhich }: {
         </section>
 
         <section className="sm-card st-panel">
-          <h3><CalendarX2 size={16} strokeWidth={1.6} /> Did not work — by reason</h3>
+        <h3>
+          <img src="/images/not_work.svg" alt="" aria-hidden="true" width={16} height={16} />
+          Did not work — by reason
+        </h3>
           {reasons.length === 0 ? (
             <p className="st-empty">No absences recorded in this period.</p>
           ) : (
@@ -1170,7 +1631,19 @@ function StatisticsTab({ exportRef, onSeeWhich }: {
                 <thead><tr><th>Reason</th><th>Worker-days</th></tr></thead>
                 <tbody>
                   {reasons.map(([reason, n]) => (
-                    <tr key={reason}><td>{reason}</td><td>{n}</td></tr>
+                    <tr key={reason}>
+                      <td>{reason}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="st-count"
+                          title="Show the workers behind this number"
+                          onClick={() => setOpenReason(reason)}
+                        >
+                          {n}
+                        </button>
+                      </td>
+                    </tr>
                   ))}
                 </tbody>
               </table>
@@ -1180,7 +1653,10 @@ function StatisticsTab({ exportRef, onSeeWhich }: {
       </div>
 
       <section className="sm-card st-panel st-wide">
-        <h3><Minimize2 size={16} strokeWidth={1.6} /> Projects compared with the company</h3>
+        <h3>
+          <img src="/images/compare.svg" alt="" aria-hidden="true" width={16} height={16} />
+          Projects compared with the company
+        </h3>
         <div className="sm-table-wrap">
           <table className="sm-table st-table">
             <thead>
@@ -1192,7 +1668,16 @@ function StatisticsTab({ exportRef, onSeeWhich }: {
             <tbody>
               {[{ name: "Whole company", c: company }, ...rows].map((r, i) => (
                 <tr key={r.name} className={i === 0 ? "st-total" : ""}>
-                  <td><strong>{r.name}</strong></td>
+                  <td>
+                    <button
+                      type="button"
+                      className={`st-proj-link${scope === r.name ? " is-current" : ""}`}
+                      title={`Show ${r.name} statistics`}
+                      onClick={() => selectScope(r.name)}
+                    >
+                      <strong>{r.name}</strong>
+                    </button>
+                  </td>
                   <td>{r.c.assigned}</td>
                   <td>{r.c.worked}</td>
                   <td>{r.c.dnw}</td>
@@ -1208,7 +1693,10 @@ function StatisticsTab({ exportRef, onSeeWhich }: {
 
       <div className="st-grid st-grid-even">
         <section className="sm-card st-panel">
-          <h3><Users size={16} strokeWidth={1.6} /> Headcount</h3>
+         <h3>
+            <img src="/images/headcounts.svg" alt="" aria-hidden="true" width={16} height={16} />
+            Headcount
+          </h3>
           <dl className="st-kv">
             <dt>Working on {hc.toLabel}</dt><dd>{Math.round(hc.toN * share)}</dd>
             <dt>Working on {hc.fromLabel}</dt><dd>{Math.round(hc.fromN * share)}</dd>
@@ -1220,10 +1708,15 @@ function StatisticsTab({ exportRef, onSeeWhich }: {
         </section>
 
         <section className="sm-card st-panel">
-          <h3><ArrowRightLeft size={16} strokeWidth={1.6} /> Joiners and leavers</h3>
+          <h3>
+            <img src="/images/compare (1).svg" alt="" aria-hidden="true" width={16} height={16} />
+            Joiners and leavers
+          </h3>
           <dl className="st-kv">
-            <dt>Joiners (employment start)</dt><dd>{joiners}</dd>
-            <dt>Leavers (effective termination date)</dt><dd>{leavers}</dd>
+            <dt>Joiners (employment start)</dt>
+            <dd><button type="button" className="st-count" title="Show the workers behind this number" onClick={() => setOpenMove("joiners")}>{joiners}</button></dd>
+            <dt>Leavers (effective termination date)</dt>
+            <dd><button type="button" className="st-count" title="Show the workers behind this number" onClick={() => setOpenMove("leavers")}>{leavers}</button></dd>
             <dt>Net change</dt><dd>{net >= 0 ? `+${net}` : net}</dd>
           </dl>
           {range === "Month" && (
@@ -1234,6 +1727,41 @@ function StatisticsTab({ exportRef, onSeeWhich }: {
           )}
         </section>
       </div>
+
+      {openKind && (
+        <AssignedModal
+          title={`${kindLabel[openKind]} · ${periodTitle}`}
+          rows={rowsFor(openKind)}
+          onClose={() => setOpenKind(null)}
+          onOpenWorker={openWorkerFromRow}
+        />
+      )}
+
+      {showUnc && (
+        <UnconfirmedModal
+          rows={uncRows}
+          onClose={() => setShowUnc(false)}
+          onOpenRecord={(project, iso) => { setShowUnc(false); onOpenRecord(project, iso); }}
+        />
+      )}
+
+      {openReason && (
+        <AssignedModal
+          title={`${openReason} · ${periodTitle}`}
+          rows={reasonRows(openReason)}
+          onClose={() => setOpenReason(null)}
+          onOpenWorker={openWorkerFromRow}
+        />
+      )}
+
+      {openMove && (
+        <MovementModal
+          title={`${openMove === "joiners" ? "Joiners" : "Leavers"} · ${periodTitle}`}
+          rows={movementRows(openMove)}
+          onClose={() => setOpenMove(null)}
+          onOpenWorker={openWorkerFromMove}
+        />
+      )}
     </>
   );
 }
@@ -1669,6 +2197,19 @@ type WorkerTab = "Current" | "Planned" | "History";
 type Tone = "ok" | "info" | "warn" | "bad" | "muted";
 
 interface DetailWorker { name: string; sp: "registered" | "none" | "pending"; role: string; start: string; end: string; accommodation: string }
+interface TaskComment { by: string; at: string; text: string }
+interface Task {
+  title: string;
+  description: string;
+  linked: string;
+  assignee: string;
+  creator: string;
+  due: string;
+  priority: string;
+  status: string;
+  comments: TaskComment[];
+}
+
 interface DetailData {
   address: string;
   endDate: string;
@@ -1682,7 +2223,8 @@ interface DetailData {
   requirements: { role: string; requested: number; filled: number; from: string; responsible: string; status: string; tone: Tone; notes?: string }[];
   accommodation: { facility: string; location: string; residents: number; availability: string }[];
   documents: { title: string; note: string }[];
-  tasks: string[];
+  tasks: Task[];
+  workerHistory: { date: string; event: string }[];
   events: { title: string; note: string }[];
 }
 
@@ -1710,6 +2252,7 @@ const AUTOPARTS_DETAIL: DetailData = {
   ],
   planned: [{ name: "Anton Novák", sp: "pending", role: "Production Operator", start: "20 Sep 2026", end: OPEN, accommodation: NOT_ACC }],
   past: [],
+  workerHistory: [{ date: "15 Jan 2025", event: "Project created (Active)" }],
   requirements: [
     { role: "Production Operator", requested: 12, filled: 8, from: "20 Sep 2026", responsible: "Jana Kollárová", status: "Partially Filled", tone: "warn" },
     { role: "Forklift Operator", requested: 3, filled: 0, from: "25 Sep 2026", responsible: "Jana Kollárová", status: "Open", tone: "info" },
@@ -1723,8 +2266,44 @@ const AUTOPARTS_DETAIL: DetailData = {
   events: [{ title: "Project created", note: "15 Jan 2025 · by Jana Kollárová" }],
 };
 
+const PACKAGING_DETAIL: DetailData = {
+  address: "Prievidza",
+  endDate: "Ongoing",
+  mainContact: "—",
+  potentialNote: "25",
+  notes: "—",
+  contacts: [],
+  current: [],
+  planned: [{ name: "Nguyen Van An", sp: "none", role: "Assembly Line Worker", start: "15 Sep 2026", end: OPEN, accommodation: NOT_ACC }],
+  past: [],
+  workerHistory: [{ date: "01 Aug 2026", event: "Project created (In Preparation)" }],
+  requirements: [
+    { role: "Assembly Line Worker", requested: 18, filled: 0, from: "15 Sep 2026", responsible: "Peter Vrábel", status: "Open", tone: "info" },
+  ],
+  accommodation: [],
+  documents: [
+    { title: "Framework Agreement", note: "Signed 15 Sep 2026" },
+    { title: "Site Rules & Safety Instructions", note: "Updated 03 Sep 2026" },
+  ],
+  tasks: [
+    {
+      title: "Prepare Packaging Line B onboarding",
+      description: "Coordinate arrival logistics and induction schedule for the first cohort.",
+      linked: "Packaging Line B",
+      assignee: "Peter Vrábel",
+      creator: "Peter Vrábel",
+      due: "12 Sep 2026",
+      priority: "Medium",
+      status: "New",
+      comments: [],
+    },
+  ],
+  events: [{ title: "Project created (In Preparation)", note: "01 Aug 2026 · by Peter Vrábel" }],
+};
+
 const detailFor = (p: Project): DetailData => {
   if (p.name === "AutoParts Slovakia" || p.pid === "p1") return AUTOPARTS_DETAIL;
+  if (p.name === "Packaging Line B" || p.pid === "p4") return PACKAGING_DETAIL;
   return {
     address: p.location,
     endDate: p.status === "Completed" ? "Ended" : "Ongoing",
@@ -1733,9 +2312,130 @@ const detailFor = (p: Project): DetailData => {
     notes: "—",
     contacts: [], current: [], planned: [], past: [], requirements: [],
     accommodation: [], documents: [], tasks: [],
-    events: [{ title: "Project created", note: `${p.startDate} · by ${p.coordinator}` }],
+    workerHistory: [{ date: p.startDate, event: `Project created (${p.status})` }],
+    events: [{ title: `Project created (${p.status})`, note: `${p.startDate} · by ${p.coordinator}` }],
   };
 };
+
+/* ---------- Task detail modal (Tasks & Notes tab) ---------- */
+const TASK_STATUSES = ["New", "In progress", "Done"];
+const taskTone = (s: string): Tone => (s === "Done" ? "ok" : s === "In progress" ? "info" : "muted");
+
+function TaskModal({ task, onClose, onStatus, onComment }: {
+  task: Task;
+  onClose: () => void;
+  onStatus: (status: string) => void;
+  onComment: (text: string) => void;
+}): React.JSX.Element {
+  const [text, setText] = useState("");
+
+  // Close on Escape + lock page scroll while open
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
+  }, [onClose]);
+
+  const post = () => {
+    if (!text.trim()) return;
+    onComment(text.trim());
+    setText("");
+  };
+
+  const rows: [string, string][] = [
+    ["Description", task.description],
+    ["Linked", task.linked],
+    ["Assignee", task.assignee],
+    ["Creator", task.creator],
+    ["Due Date", task.due],
+    ["Priority", task.priority],
+  ];
+
+  return createPortal(
+    <>
+      <style>{modalCss}{taskCss}</style>
+      <div className="ap-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+        <div className="ap-modal tk-modal" role="dialog" aria-modal="true" aria-labelledby="tk-title">
+          <div className="ap-head">
+            <h2 id="tk-title">{task.title}</h2>
+            <button type="button" className="ap-close" aria-label="Close" onClick={onClose}>
+              <X size={20} strokeWidth={1.5} />
+            </button>
+          </div>
+
+          <dl className="tk-kv">
+            {rows.map(([k, v]) => (
+              <React.Fragment key={k}>
+                <dt>{k}</dt>
+                <dd>{v}</dd>
+              </React.Fragment>
+            ))}
+          </dl>
+
+          <div className="ap-field tk-status">
+            <label htmlFor="tk-status">Status</label>
+            <div className="ap-select">
+              <select id="tk-status" value={task.status} onChange={(e) => onStatus(e.target.value)}>
+                {TASK_STATUSES.map((s) => <option key={s}>{s}</option>)}
+              </select>
+              <ChevronDown size={18} />
+            </div>
+          </div>
+
+          <h3 className="tk-h">Comments</h3>
+          {task.comments.length === 0 ? (
+            <p className="tk-empty">No comments yet.</p>
+          ) : (
+            <ul className="tk-comments">
+              {task.comments.map((c, i) => (
+                <li key={i}>
+                  <strong>{c.by}</strong> <small>{c.at}</small>
+                  <p>{c.text}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <div className="tk-add">
+            <input
+              placeholder="Add a comment..."
+              aria-label="Add a comment"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); post(); } }}
+            />
+            <button type="button" onClick={post}>Post</button>
+          </div>
+        </div>
+      </div>
+    </>,
+    document.body,
+  );
+}
+
+const taskCss = `
+.ap-modal.tk-modal{max-width:600px;padding:26px 28px 28px}
+.tk-modal .ap-head{margin-bottom:22px}
+.tk-modal .ap-head h2{font-size:16px}
+.tk-kv{display:grid;grid-template-columns:168px 1fr;gap:10px 18px;margin:0 0 20px;font-size:13px;line-height:1.35}
+.tk-kv dt{color:var(--muted,#6b6b66)}
+.tk-kv dd{margin:0;color:var(--text,#1c1c1a)}
+.tk-status{margin-bottom:20px}
+.tk-modal .ap-field label{font-size:13px;color:var(--muted,#6b6b66)}
+.tk-h{margin:0 0 8px;font-size:14px;font-weight:600;color:var(--text,#1c1c1a)}
+.tk-empty{margin:0 0 14px;font-size:13px;color:var(--muted,#6b6b66)}
+.tk-comments{list-style:none;margin:0 0 12px;padding:0;display:flex;flex-direction:column;gap:10px}
+.tk-comments li{font-size:13px}
+.tk-comments small{margin-left:6px;color:var(--muted,#6b6b66)}
+.tk-comments p{margin:2px 0 0}
+.tk-add{display:flex;align-items:center;gap:12px;height:42px;padding:0 18px;border:1px solid var(--line,#dedcd5);border-radius:8px;background:#faf9f6}
+.tk-add input{flex:1;min-width:0;border:0;background:transparent;outline:none;font:inherit;font-size:14px;color:var(--text,#1c1c1a)}
+.tk-add button{border:0;background:none;font:inherit;font-size:14px;font-weight:500;color:var(--green,#1a6b2f);cursor:pointer}
+.tk-add:focus-within{border-color:var(--green,#1a6b2f)}
+@media (max-width:640px){.tk-kv{grid-template-columns:1fr;gap:2px 0}.tk-kv dd{margin-bottom:8px}}
+`;
 
 function Pill({ tone = "muted", dot = true, children }: { tone?: Tone; dot?: boolean; children: React.ReactNode }): React.JSX.Element {
   return <span className={`pd-pill is-${tone}${dot ? "" : " no-dot"}`}>{children}</span>;
@@ -1759,6 +2459,11 @@ function ProjectDetail({ project, id, coordinators, onBack, onStats, onDaily, on
   // Workforce requirements: seeded from the project data, then extended by the Add Requirement dialog
   const [reqs, setReqs] = useState<DetailData["requirements"]>(d.requirements);
   const [reqOpen, setReqOpen] = useState(false);
+
+  // Tasks: seeded from the project data; the Task dialog changes status and adds comments
+  const [tasks, setTasks] = useState<Task[]>(d.tasks);
+  const [taskIdx, setTaskIdx] = useState<number | null>(null);
+  const patchTask = (i: number, fn: (t: Task) => Task) => setTasks((l) => l.map((t, j) => (j === i ? fn(t) : t)));
 
   const addRequirement = (r: NewRequirementInput) => {
     setReqs((list) => [
@@ -1899,8 +2604,19 @@ function ProjectDetail({ project, id, coordinators, onBack, onStats, onDaily, on
               );
             })}
           </div>
-          {workerRows.length === 0 ? (
-            <p className="pd-empty">No {wTab.toLowerCase()} workers on this project.</p>
+          {wTab === "History" ? (
+            <div className="sm-table-wrap">
+              <table className="sm-table pd-table">
+                <thead><tr><th>Date</th><th>Event</th></tr></thead>
+                <tbody>
+                  {d.workerHistory.length === 0 ? (
+                    <tr><td colSpan={2} className="pd-none">No history yet.</td></tr>
+                  ) : d.workerHistory.map((h) => (
+                    <tr key={h.date + h.event}><td>{h.date}</td><td>{h.event}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           ) : (
             <div className="sm-table-wrap">
               <table className="sm-table pd-table">
@@ -1908,6 +2624,9 @@ function ProjectDetail({ project, id, coordinators, onBack, onStats, onDaily, on
                   <tr><th>Worker</th><th>SP</th><th>Role</th><th>Start</th><th>Planned/Actual End</th><th>Accommodation</th></tr>
                 </thead>
                 <tbody>
+                  {workerRows.length === 0 && (
+                    <tr><td colSpan={6} className="pd-none">No workers in this view.</td></tr>
+                  )}
                   {workerRows.map((w) => (
                     <tr key={w.name}>
                       <td>
@@ -1978,7 +2697,7 @@ function ProjectDetail({ project, id, coordinators, onBack, onStats, onDaily, on
 
       {tab === "Contacts" && (
         <section className="sm-card pd-panel">
-          {d.contacts.length === 0 ? <p className="pd-empty">No contacts added yet.</p> : d.contacts.map((c) => (
+          {d.contacts.length === 0 ? <p className="pd-empty">No linked contacts yet.</p> : d.contacts.map((c) => (
             <div key={c.email} className="pd-item">
               <strong>{c.name}</strong>
               <span>{c.role} · {c.phone} · {c.email}</span>
@@ -1989,11 +2708,13 @@ function ProjectDetail({ project, id, coordinators, onBack, onStats, onDaily, on
 
       {tab === "Accommodation" && (
         <section className="sm-card pd-panel">
-          {d.accommodation.length === 0 ? <p className="pd-empty">No accommodation linked to this project.</p> : (
-            <div className="sm-table-wrap">
+          <div className="sm-table-wrap">
               <table className="sm-table pd-table">
                 <thead><tr><th>Facility</th><th>Location</th><th>This Project's Residents</th><th>Facility Availability</th></tr></thead>
                 <tbody>
+                  {d.accommodation.length === 0 && (
+                    <tr><td colSpan={4} className="pd-none">No linked facilities.</td></tr>
+                  )}
                   {d.accommodation.map((a) => (
                     <tr key={a.facility}>
                       <td>
@@ -2009,7 +2730,6 @@ function ProjectDetail({ project, id, coordinators, onBack, onStats, onDaily, on
                 </tbody>
               </table>
             </div>
-          )}
         </section>
       )}
 
@@ -2026,8 +2746,14 @@ function ProjectDetail({ project, id, coordinators, onBack, onStats, onDaily, on
 
       {tab === "Tasks & Notes" && (
         <section className="sm-card pd-panel">
-          {d.tasks.length === 0 ? <p className="pd-empty pd-flat">No open tasks linked to this project.</p> : d.tasks.map((t) => (
-            <div key={t} className="pd-item"><strong>{t}</strong></div>
+          {tasks.length === 0 ? <p className="pd-empty pd-flat">No open tasks linked to this project.</p> : tasks.map((t, i) => (
+            <button key={t.title} type="button" className="pd-item pd-task pd-task-btn" onClick={() => setTaskIdx(i)}>
+              <div className="pd-task-main">
+                <strong>{t.title} — {t.linked}</strong>
+                <span>Due {t.due} · {t.priority} priority · Assignee: {t.assignee}</span>
+              </div>
+              <Pill tone={taskTone(t.status)}>{t.status}</Pill>
+            </button>
           ))}
         </section>
       )}
@@ -2049,6 +2775,17 @@ function ProjectDetail({ project, id, coordinators, onBack, onStats, onDaily, on
           coordinators={coordinators}
           onClose={() => setEditOpen(false)}
           onSave={(patch) => { onSave(patch); setEditOpen(false); }}
+        />
+      )}
+
+      {taskIdx !== null && tasks[taskIdx] && (
+        <TaskModal
+          task={tasks[taskIdx]}
+          onClose={() => setTaskIdx(null)}
+          onStatus={(status) => patchTask(taskIdx, (t) => ({ ...t, status }))}
+          onComment={(text) =>
+            patchTask(taskIdx, (t) => ({ ...t, comments: [...t.comments, { by: CONFIRMER, at: stamp(), text }] }))
+          }
         />
       )}
 
@@ -2075,6 +2812,8 @@ function ProjectsPageInner({ onOpenWorker }: { onOpenWorker: (w: WorkerRef) => v
   const [tab, setTab] = useState<Tab>(
     initialTab === "daily" ? "Daily work status" : initialTab === "stats" ? "Statistics" : "Projects",
   );
+  // Project + date chosen in the "Unconfirmed project-days" dialog
+  const [pendingDaily, setPendingDaily] = useState<{ project: string; day: string } | null>(null);
   const [query, setQuery] = useState("");
   const holidayRef = React.useRef<(() => void) | null>(null);
   const exportRef = React.useRef<(() => void) | null>(null);
@@ -2257,9 +2996,22 @@ function ProjectsPageInner({ onOpenWorker }: { onOpenWorker: (w: WorkerRef) => v
         ))}
       </div>
 
-      {isStats && <StatisticsTab exportRef={exportRef} onSeeWhich={() => setTab("Daily work status")} />}
+      {isStats && (
+        <StatisticsTab
+          exportRef={exportRef}
+          onOpenRecord={(project, day) => { setPendingDaily({ project, day }); setTab("Daily work status"); }}
+          onOpenWorker={onOpenWorker}
+        />
+      )}
 
-      {isDaily && <DailyWorkStatus holidayRef={holidayRef} onOpenWorker={onOpenWorker} />}
+      {isDaily && (
+        <DailyWorkStatus
+          holidayRef={holidayRef}
+          onOpenWorker={onOpenWorker}
+          initial={pendingDaily}
+          onConsumed={() => setPendingDaily(null)}
+        />
+      )}
 
       {tab === "Projects" && (
         <>
@@ -2546,7 +3298,7 @@ const css = `
 .st-grid{gap:12px;margin-bottom:12px}
 .st-panel{padding:12px 16px 14px}
 .st-wide{margin-bottom:12px}
-.st-panel h3{font-size:14.5px;margin-bottom:10px;gap:8px}
+.st-panel h3{font-size:14px;margin-bottom:10px;gap:8px;font-weight:600}
 .st-bar{height:105px}
 .st-col{gap:5px}
 .st-col>span{font-size:12px}
@@ -2566,9 +3318,9 @@ const css = `
 }
 
 /* ---- Statistics: "Worker-days by day" + "Did not work — by reason" cards (match design) ---- */
-.st-grid:not(.st-grid-even){align-items:stretch;gap:24px}
-.st-grid:not(.st-grid-even)>.st-panel{display:flex;flex-direction:column;padding:20px 20px 22px;width:460px}
-.st-grid:not(.st-grid-even)>.st-panel h3{font-size:14.5px;font-weight:600;gap:10px;margin:0 0 14px}
+.st-grid:not(.st-grid-even){align-items:stretch;gap:12px!important;column-gap:12px!important;grid-template-columns:1fr 1fr}
+.st-grid:not(.st-grid-even)>.st-panel{display:flex;flex-direction:column;padding:20px 20px 22px;width:auto;min-width:0}
+.st-grid:not(.st-grid-even)>.st-panel h3{font-size:14px;font-weight:600;gap:10px;margin:0 0 14px}
 .st-grid:not(.st-grid-even)>.st-panel h3 svg{flex:none;color:var(--muted)}
 
 /* chart */
@@ -2654,7 +3406,7 @@ const css = `
 .pd-table .pd-pill{height:25px;font-size:13.5px}
 .pd-item{display:flex;flex-direction:column;gap:3px;padding:2px 0 16px;font-size:15px}
 .pd-item:last-child{padding-bottom:2px}
-.pd-item strong{font-size:15.5px}
+.pd-item strong{font-size:14px;font-weight:600}
 .pd-item span{color:var(--muted)}
 .pd-empty{margin:6px 0;color:var(--muted);font-size:15px}
 @media (max-width:1100px){
@@ -2734,6 +3486,10 @@ const css = `
 .dw-.dw-correct,.dw-table-ro .dw-correct,.dw-table-ro td.dw-act .dw-correct{background:none;border:0;padding:0;color:var(--green,#1a6b2f)!important;font-size:13px;font-weight:500;cursor:pointer}
 .dw-correct:hover,.dw-table-ro .dw-correct:hover{text-decoration:none;color:var(--green,#1a6b2f)!important}
 .dw-review .sm-btn-primary{background:#5fd68a;color:#073b1a;border-color:transparent}
+.dw-review-row h3{gap:6px}
+.dw-review-link{padding:0;border:0;background:none;font:inherit;font-weight:inherit;color:var(--green,#1a6b2f);cursor:pointer}
+.dw-review-link:hover{text-decoration:underline}
+.dw-review-link:focus-visible{outline:2px solid var(--green,#1a6b2f);outline-offset:3px;border-radius:4px}
 
 /* ---- Daily work status: top card (matches design) ---- */
 .dw-top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px 24px}
@@ -2769,6 +3525,34 @@ const css = `
 /* ---- Facility links inside project tables ---- */
 .pd-facility{font-weight:600;color:var(--text);cursor:pointer}
 .pd-facility:hover{color:var(--green)}
+
+/* ---- Statistics: clickable "Assigned worker-days" number ---- */
+.sm-stat-value.st-link{display:block;padding:0;border:0;background:none;text-align:left;font:inherit;font-size:26px;font-weight:600;line-height:1.1;color:inherit;cursor:pointer}
+.sm-stat-value.st-link.is-danger{color:#b42318}
+.sm-stat-value.st-link:hover{color:var(--green,#1a6b2f);text-decoration:none}
+.sm-stat-value.st-link:focus-visible{outline:2px solid var(--green,#1a6b2f);outline-offset:3px;border-radius:4px}
+
+/* ---- Statistics: clickable counts in "Did not work — by reason" ---- */
+.st-count{padding:0;border:0;background:none;font:inherit;font-weight:500;color:inherit;cursor:pointer}
+.st-count:hover{color:var(--green,#1a6b2f)}
+.st-kv .st-count{font-weight:inherit}
+.st-count:focus-visible{outline:2px solid var(--green,#1a6b2f);outline-offset:3px;border-radius:4px}
+
+/* ---- Project detail: empty rows + task rows ---- */
+.pd-table td.pd-none{color:var(--text);padding-top:12px;padding-bottom:12px}
+.pd-task{flex-direction:row;align-items:center;justify-content:space-between;gap:16px}
+.pd-task-main{display:flex;flex-direction:column;gap:3px;min-width:0}
+.pd-task-main span{color:var(--muted)}
+.pd-task-btn{width:100%;padding:0 0 20px;border:0;background:none;font:inherit;text-align:left;color:inherit;cursor:pointer}
+.pd-task-btn:last-child{padding-bottom:2px}
+.pd-task-btn:hover strong{color:var(--green)}
+.pd-task-btn:focus-visible{outline:2px solid var(--green);outline-offset:3px;border-radius:6px}
+
+/* ---- Statistics: clickable project names in "Projects compared with the company" ---- */
+.st-proj-link{padding:0;border:0;background:none;font:inherit;color:inherit;text-align:left;cursor:pointer}
+.st-proj-link:hover strong{color:var(--green,#1a6b2f)}
+.st-proj-link.is-current strong{color:var(--green,#1a6b2f)}
+.st-proj-link:focus-visible{outline:2px solid var(--green,#1a6b2f);outline-offset:3px;border-radius:4px}
 `;
 
 /* ---------- Exported page: clicking a worker name opens the Workers page at the top ---------- */

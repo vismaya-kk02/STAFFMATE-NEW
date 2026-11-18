@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   ChevronDown, ChevronRight, Download, Search, SlidersHorizontal, AlignJustify, Menu, X,
   UserX, Pencil, Check, Plus, ArrowRightLeft, CalendarX2, LogIn, FileText, CloudUpload, BadgeCheck,
-  Ban, TrendingUp, ClipboardList,
+  Ban, TrendingUp, ClipboardList, UserCheck,
 } from "lucide-react";
 import AddWorkerPage from "./AddWorkerPage"; // <- adjust the path to where your Add Worker dialog lives
 import WorkerTable, { STATUS_PILL } from "../components/WorkerTable";
@@ -175,6 +176,9 @@ interface WorkerDetailInfo {
   country: string; prepStage: string; arrival: string; workStart: string;
   empStart: string; employer: string; spFrom: string; deregFrom: string; verifiedBy: string; spFile: string;
   createdOn: string; createdBy: string; assignStart: string;
+  accommodationStart?: string;
+  /** Set when an assignment was ended: the day the worker became Available again ("09 Sep 2026"). */
+  pendingSince?: string;
   docs: DocItem[];
 }
 
@@ -247,9 +251,12 @@ const AS_OF = "2026-09-09"; // same "as of" date as the other pages
 const daysSince = (iso: string) => Math.round((Date.parse(AS_OF) - Date.parse(iso)) / 86400000);
 
 const pendingLabel = (w: Worker): string => (w.status === "Did not start" ? "Did-not-start check" : w.status);
-const pendingHint = (w: Worker): string | null =>
+/** `ended` = the worker's assignment was just ended, so the next step is to reassign or terminate. */
+const pendingHint = (w: Worker, ended = false): string | null =>
   w.status === "Available"
-    ? (w.sp !== "Registered" ? "Verify Social Insurance evidence to activate the assignment." : "Assign the worker to a project.")
+    ? (ended
+        ? "Reassign to a project, or begin termination."
+        : w.sp !== "Registered" ? "Verify Social Insurance evidence to activate the assignment." : "Assign the worker to a project.")
     : w.status === "In preparation" ? "Complete the preparation checklist and required documents."
     : w.status === "Did not start" ? "Complete the did-not-start check."
     : null;
@@ -291,7 +298,7 @@ function TerminationDialog({ worker, onClose, onConfirm }: {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  return (
+  return createPortal(
     <div className="tm-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="tm-dialog" role="dialog" aria-modal="true" aria-labelledby="tm-title">
         <div className="tm-head">
@@ -325,7 +332,8 @@ function TerminationDialog({ worker, onClose, onConfirm }: {
           Begin termination
         </button>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -348,7 +356,14 @@ const isoToDisp = (s: string) => {
 const dashBlank = (v: string) => (v === "—" ? "" : v);
 const blankDash = (v: string) => v.trim() || "—";
 
-interface ProfilePatch { name: string; coordinator: string }
+interface ProfilePatch {
+  name: string;
+  coordinator: string;
+  sp?: SpState;
+  project?: string | null;
+  accommodation?: string | null;
+  status?: WorkerStatus;
+}
 
 function EditProfileDialog({ worker, d, onClose, onSave }: {
   worker: Worker;
@@ -385,7 +400,7 @@ function EditProfileDialog({ worker, d, onClose, onSave }: {
     );
   };
 
-  return (
+  return createPortal(
     <div className="tm-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="tm-dialog" role="dialog" aria-modal="true" aria-labelledby="ep-title">
         <div className="tm-head">
@@ -443,7 +458,370 @@ function EditProfileDialog({ worker, d, onClose, onSave }: {
           Save Changes
         </button>
       </div>
-    </div>
+    </div>,
+    document.body,
+  );
+}
+
+
+/* ---------- Update Social Insurance record dialog ---------- */
+function UpdateSPRecordModal({
+  worker,
+  details,
+  onClose,
+  onSave,
+}: {
+  worker: Worker;
+  details: WorkerDetailInfo;
+  onClose: () => void;
+  onSave: (patch: ProfilePatch, extra: Partial<WorkerDetailInfo>) => void;
+}): React.JSX.Element {
+  const [employer, setEmployer] = useState(details.employer === "—" ? "Staffmate s.r.o." : details.employer);
+  const [effectiveFrom, setEffectiveFrom] = useState(dispToIso(details.spFrom));
+  const [deregistration, setDeregistration] = useState(dispToIso(details.deregFrom));
+  const [evidence, setEvidence] = useState<File | null>(null);
+  const [verified, setVerified] = useState(worker.sp === "Registered");
+
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKey);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", handleKey);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [onClose]);
+
+  const save = () => {
+    const fileName = evidence?.name || details.spFile;
+    const hasEvidence = fileName !== "—" && fileName.trim() !== "";
+    const deregistered = !!deregistration && deregistration <= AS_OF;
+    const effectiveNow = !!effectiveFrom && effectiveFrom <= AS_OF;
+
+    let nextSp: SpState;
+    if (!hasEvidence) nextSp = "No evidence";
+    else if (verified && effectiveNow && !deregistered) nextSp = "Registered";
+    else nextSp = "Uploaded, awaiting verification";
+
+    onSave(
+      { name: worker.name, coordinator: worker.coordinator, sp: nextSp },
+      {
+        employer: employer.trim() || "—",
+        spFrom: effectiveFrom ? isoToDisp(effectiveFrom) : "—",
+        deregFrom: deregistration ? isoToDisp(deregistration) : "—",
+        spFile: fileName,
+        verifiedBy: hasEvidence && verified ? (details.verifiedBy !== "—" ? details.verifiedBy : "Verified") : "—",
+      },
+    );
+    onClose();
+  };
+
+  return createPortal(
+    <div
+      className="sp-modal-overlay"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="sp-modal" role="dialog" aria-modal="true" aria-labelledby="sp-modal-title">
+        <div className="sp-modal-header">
+          <h2 id="sp-modal-title">Update SP Record</h2>
+          <button type="button" className="sp-modal-close" onClick={onClose} aria-label="Close">
+            <X size={19} />
+          </button>
+        </div>
+
+        <div className="sp-modal-body">
+          <div className="sp-form-grid">
+            <label className="sp-field">
+              <span>Employing Entity</span>
+              <input
+                type="text"
+                value={employer}
+                onChange={(event) => setEmployer(event.target.value)}
+              />
+            </label>
+
+            <label className="sp-field">
+              <span>Registration Effective From</span>
+              <input
+                type="date"
+                value={effectiveFrom}
+                onChange={(event) => setEffectiveFrom(event.target.value)}
+              />
+            </label>
+
+            <label className="sp-field">
+              <span>Deregistration Effective From (if applicable)</span>
+              <input
+                type="date"
+                value={deregistration}
+                onChange={(event) => setDeregistration(event.target.value)}
+              />
+            </label>
+          </div>
+
+          <label className="sp-field sp-evidence">
+            <span>Supporting Evidence</span>
+            <input
+              type="file"
+              accept=".pdf,.jpg,.jpeg,.png"
+              onChange={(event) => setEvidence(event.target.files?.[0] ?? null)}
+            />
+            <small>Current evidence on file: {evidence?.name || details.spFile}</small>
+          </label>
+
+          <label className="sp-verify">
+            <input
+              type="checkbox"
+              checked={verified}
+              onChange={(event) => setVerified(event.target.checked)}
+            />
+            <span>
+              I confirm this evidence has been reviewed and is valid (verification — authorised users only)
+            </span>
+          </label>
+
+          <p className="sp-help-text">
+            The SP badge is not set directly — it is derived from these facts: no evidence on file shows red
+            (Not Registered); evidence without verification shows amber (Pending Verification); verified evidence
+            effective on or before today shows green (Registered); a verified but future-effective date stays amber
+            until that date arrives; a deregistration date on or before today shows grey (Deregistered).
+          </p>
+        </div>
+
+        <div className="sp-modal-footer">
+          <button type="button" className="sp-save-btn" onClick={save}>Save SP Record</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+
+/* ---------- Accommodation check-in dialog ---------- */
+const CHECK_IN_FACILITIES = [
+  { name: "Villa Rezidencia Trnava", available: 38 },
+];
+
+function CheckInDialog({
+  worker,
+  onClose,
+  onConfirm,
+}: {
+  worker: Worker;
+  onClose: () => void;
+  onConfirm: (facility: string, date: string) => void;
+}): React.JSX.Element {
+  const [facility, setFacility] = useState(
+    worker.accommodation && CHECK_IN_FACILITIES.some((f) => f.name === worker.accommodation)
+      ? worker.accommodation
+      : CHECK_IN_FACILITIES[0].name,
+  );
+  const [date, setDate] = useState(AS_OF);
+
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKey);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", handleKey);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [onClose]);
+
+  const selectedFacility = CHECK_IN_FACILITIES.find((item) => item.name === facility);
+  const canCheckIn = !!facility && !!date && !!selectedFacility && selectedFacility.available > 0;
+
+  return createPortal(
+    <div
+      className="ci-overlay"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="ci-modal" role="dialog" aria-modal="true" aria-labelledby="ci-title">
+        <div className="ci-header">
+          <h2 id="ci-title">Check in {worker.name}</h2>
+          <button type="button" className="ci-close" onClick={onClose} aria-label="Close">
+            <X size={19} />
+          </button>
+        </div>
+
+        <div className="ci-body">
+          <label className="ci-field ci-facility">
+            <span>Facility <b>*</b></span>
+            <span className="ci-select">
+              <select value={facility} onChange={(event) => setFacility(event.target.value)} required>
+                {CHECK_IN_FACILITIES.map((item) => (
+                  <option key={item.name} value={item.name} disabled={item.available <= 0}>
+                    {item.name} ({item.available} available)
+                  </option>
+                ))}
+              </select>
+              <ChevronDown size={17} />
+            </span>
+          </label>
+
+          <label className="ci-field ci-date">
+            <span>Actual Check-in Date</span>
+            <input
+              type="date"
+              value={date}
+              onChange={(event) => setDate(event.target.value)}
+              required
+            />
+          </label>
+
+          <p className="ci-note">
+            Occupancy is calculated from actual check-ins, not planned arrivals — this stay counts against
+            capacity immediately. A facility at full capacity cannot be selected.
+          </p>
+
+          <button
+            type="button"
+            className="ci-submit"
+            disabled={!canCheckIn}
+            onClick={() => onConfirm(facility, date)}
+          >
+            Check In
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/* ---------- Transfer to another project dialog ---------- */
+const TRANSFER_PROJECTS = ["AutoParts Slovakia", "CNC Machining Hall", "Line 3 Assembly", "Warehouse Ops"];
+
+function TransferDialog({ worker, role: currentRole, onClose, onConfirm }: {
+  worker: Worker;
+  role: string;
+  onClose: () => void;
+  onConfirm: (project: string, role: string, startIso: string) => void;
+}): React.JSX.Element {
+  const options = TRANSFER_PROJECTS.filter((p) => p !== worker.project);
+  const [project, setProject] = useState(options[0] ?? "");
+  const [role, setRole] = useState(currentRole === "—" ? "" : currentRole);
+  const [start, setStart] = useState(AS_OF);
+
+  // Esc closes the dialog
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return createPortal(
+    <div className="tm-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="tm-dialog tr-dialog" role="dialog" aria-modal="true" aria-labelledby="tr-title">
+        <div className="tm-head">
+          <h2 id="tr-title">Transfer {worker.name} to another project</h2>
+          <button type="button" className="tm-close" aria-label="Close" onClick={onClose}><X size={18} /></button>
+        </div>
+
+        <div className="tm-grid">
+          <label className="tm-field tm-wide">
+            <span>Project <b>*</b></span>
+            <span className="tm-select">
+              <select value={project} onChange={(e) => setProject(e.target.value)}>
+                {options.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+              <ChevronDown size={16} />
+            </span>
+          </label>
+
+          <label className="tm-field">
+            <span>Role</span>
+            <input value={role} onChange={(e) => setRole(e.target.value)} />
+          </label>
+          <label className="tm-field">
+            <span>Start Date</span>
+            <input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
+          </label>
+        </div>
+
+        <button
+          type="button"
+          className="sm-btn sm-btn-primary tm-submit"
+          disabled={!project || !start}
+          onClick={() => onConfirm(project, role.trim() || "—", start)}
+        >
+          Transfer
+        </button>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/* ---------- Assign to a project dialog (shown after an assignment was ended) ---------- */
+function AssignDialog({ worker, role: currentRole, onClose, onConfirm }: {
+  worker: Worker;
+  role: string;
+  onClose: () => void;
+  onConfirm: (project: string, role: string, startIso: string) => void;
+}): React.JSX.Element {
+  const [project, setProject] = useState(TRANSFER_PROJECTS[0]);
+  const [role, setRole] = useState(currentRole === "—" ? "" : currentRole);
+  const [start, setStart] = useState(AS_OF);
+
+  // Esc closes the dialog
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return createPortal(
+    <div className="tm-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="tm-dialog tr-dialog" role="dialog" aria-modal="true" aria-labelledby="as-title">
+        <div className="tm-head">
+          <h2 id="as-title">Assign {worker.name} to a project</h2>
+          <button type="button" className="tm-close" aria-label="Close" onClick={onClose}><X size={18} /></button>
+        </div>
+
+        <div className="tm-grid">
+          <label className="tm-field tm-wide">
+            <span>Project <b>*</b></span>
+            <span className="tm-select">
+              <select value={project} onChange={(e) => setProject(e.target.value)}>
+                {TRANSFER_PROJECTS.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+              <ChevronDown size={16} />
+            </span>
+          </label>
+
+          <label className="tm-field">
+            <span>Role</span>
+            <input value={role} onChange={(e) => setRole(e.target.value)} />
+          </label>
+          <label className="tm-field">
+            <span>Start Date</span>
+            <input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
+          </label>
+        </div>
+
+        <button
+          type="button"
+          className="sm-btn sm-btn-primary tm-submit"
+          disabled={!project || !start}
+          onClick={() => onConfirm(project, role.trim() || "—", start)}
+        >
+          Assign
+        </button>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -460,6 +838,10 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
   const [termOpen, setTermOpen] = useState(false);
   const [termNote, setTermNote] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+  const [spOpen, setSpOpen] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [checkInOpen, setCheckInOpen] = useState(false);
 
   // Open at the top (the app shell may have been scrolled down on the list / Projects page)
   useEffect(() => {
@@ -493,9 +875,26 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
 
   const assignmentStatus = worker.status === "Assigned to a project" ? "Active" : "Planned";
 
-  const hint = pendingHint(worker);
-  const sinceIso = dispToIso(d.empStart);
+  // End the current assignment: the worker becomes Available again and waits for a new project (or termination).
+  const endAssignment = () => {
+    const endedOn = isoToDisp(AS_OF);
+    onSave(
+      { name: worker.name, coordinator: worker.coordinator, project: null, status: "Available" },
+      { pendingSince: endedOn },
+    );
+    setTermNote(
+      `Assignment ended for ${worker.name} (${worker.id}) on ${endedOn}${worker.project ? ` — ${worker.project}` : ""}. The worker is now Available; assign a new project or begin termination.`,
+    );
+  };
+
+  // The worker just came off a project (set by End Assignment)
+  const ended = !!d.pendingSince;
+  const hint = pendingHint(worker, ended);
+  const sinceLabel = ended ? (d.pendingSince as string) : d.empStart;
+  const sinceIso = dispToIso(sinceLabel);
   const pendingDays = sinceIso ? daysSince(sinceIso) : null;
+  const sinceText =
+    pendingDays === null ? "" : ended && pendingDays === 0 ? ` Since ${sinceLabel}.` : ` Since ${sinceLabel} · ${pendingDays} days.`;
 
   return (
     <div className="wk-enter">
@@ -592,7 +991,10 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
       {/* Shown only when there is a pending action (hidden for workers already assigned to a project) */}
       {hint && (
         <section className="sm-card wd-status">
-          <h3 className="wd-status-title"><TrendingUp size={16} /> Worker status and pending action</h3>
+          <h3 className="wd-status-title">
+            <img src="/images/worker_status.svg" alt="" className="wd-status-icon" />
+            Worker status and pending action
+          </h3>
           {kv([
             ["Worker status", (
               <span key="s">
@@ -613,7 +1015,7 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
             />
             <span>
               <b>Pending action: {pendingLabel(worker)}</b> — {hint}
-              {pendingDays !== null ? ` Since ${d.empStart} · ${pendingDays} days.` : ""}
+              {sinceText}
             </span>
           </div>
         </section>
@@ -730,7 +1132,18 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
               </tbody>
             </table>
           </div>
-          <button type="button" className="sm-btn sm-btn-outline wd-btn"><BadgeCheck size={16} /> Update SP Record</button>
+          <button
+            type="button"
+            className="sm-btn sm-btn-outline wd-btn"
+            onClick={() => setSpOpen(true)}
+          >
+            <img
+              src="/images/verified.svg"
+              alt=""
+              className="wd-verified-icon"
+             width={16}  height={16}/>
+            Update SP Record
+          </button>
         </section>
       )}
 
@@ -738,11 +1151,42 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
         <section className="sm-card wd-panel">
           <div className="wd-panel-head">
             <h3>Current &amp; Planned Assignment</h3>
-            {worker.project && (
+            {worker.project ? (
               <div className="wd-head-btns">
-                <button type="button" className="sm-btn sm-btn-outline"><ArrowRightLeft size={16} /> Transfer</button>
-                <button type="button" className="sm-btn sm-btn-outline"><CalendarX2 size={16} /> End Assignment</button>
+                <button type="button" className="sm-btn sm-btn-outline" onClick={() => setTransferOpen(true)}>
+                  <img
+                    src="/images/transfer_assignment.svg"
+                    alt=""
+                    aria-hidden="true"
+                    width={16}
+                    height={16}
+                    style={{ display: "block", flex: "none" }}
+                  />{" "}
+                  Transfer
+                </button>
+                <button type="button" className="sm-btn sm-btn-outline" onClick={endAssignment}>
+                  <img
+                    src="/images/end.svg"
+                    alt=""
+                    aria-hidden="true"
+                    width={16}
+                    height={16}
+                    style={{ display: "block", flex: "none" }}
+                  />{" "}
+                  End Assignment
+                </button>
               </div>
+            ) : (
+              worker.status !== "Terminated" && worker.status !== "Did not start" && (
+                <button
+                  type="button"
+                  className="sm-btn sm-btn-outline"
+                  onClick={() => setAssignOpen(true)}
+                >
+                  <img src="/images/assign.svg" alt="" className="wd-assign-icon" width={16} height={16}/>
+                  Assign to Project
+                </button>
+              )
             )}
           </div>
           <div className="sm-table-wrap">
@@ -761,7 +1205,7 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
                     <td><WPill tone={assignmentStatus === "Active" ? "ok" : "muted"}>{assignmentStatus}</WPill></td>
                   </tr>
                 ) : (
-                  <tr><td colSpan={6} className="wd-muted">No current or planned assignment.</td></tr>
+                  <tr><td colSpan={6} className="wd-muted">No current assignment</td></tr>
                 )}
               </tbody>
             </table>
@@ -776,7 +1220,7 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
         <section className="sm-card wd-panel">
           <div className="wd-panel-head">
             <h3>Accommodation</h3>
-            <button type="button" className="sm-btn sm-btn-outline"><LogIn size={16} /> Check In</button>
+            <button type="button" className="sm-btn sm-btn-outline" onClick={() => setCheckInOpen(true)}><LogIn size={16} /> Check In</button>
           </div>
           <div className="sm-table-wrap">
             <table className="sm-table wd-table">
@@ -785,7 +1229,7 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
                 {worker.accommodation ? (
                   <tr>
                     <td><strong>{worker.accommodation}</strong></td>
-                    <td>—</td>
+                    <td>{d.accommodationStart ?? "—"}</td>
                     <td>Open-ended</td>
                     <td>{worker.project ?? "—"}</td>
                   </tr>
@@ -811,6 +1255,37 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
         </section>
       )}
 
+      {checkInOpen && (
+        <CheckInDialog
+          worker={worker}
+          onClose={() => setCheckInOpen(false)}
+          onConfirm={(facility, date) => {
+            onSave(
+              {
+                name: worker.name,
+                coordinator: worker.coordinator,
+                accommodation: facility,
+              },
+              { accommodationStart: isoToDisp(date) },
+            );
+            setCheckInOpen(false);
+            setTermNote(`${worker.name} checked in at ${facility} on ${isoToDisp(date)}.`);
+          }}
+        />
+      )}
+
+      {spOpen && (
+        <UpdateSPRecordModal
+          worker={worker}
+          details={d}
+          onClose={() => setSpOpen(false)}
+          onSave={(patch, ex) => {
+            onSave(patch, ex);
+            setTermNote("SP record updated successfully.");
+          }}
+        />
+      )}
+
       {editOpen && (
         <EditProfileDialog
           worker={worker}
@@ -820,6 +1295,43 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
             onSave(patch, ex);
             setEditOpen(false);
             setTermNote(`Profile updated for ${patch.name} (${worker.id}).`);
+          }}
+        />
+      )}
+
+      {transferOpen && (
+        <TransferDialog
+          worker={worker}
+          role={d.role}
+          onClose={() => setTransferOpen(false)}
+          onConfirm={(project, role, startIso) => {
+            onSave(
+              { name: worker.name, coordinator: PROJECT_COORD[project] ?? worker.coordinator, project },
+              { role, assignStart: isoToDisp(startIso) },
+            );
+            setTransferOpen(false);
+            setTermNote(`${worker.name} (${worker.id}) transferred to ${project} — starting ${isoToDisp(startIso)}.`);
+          }}
+        />
+      )}
+
+      {assignOpen && (
+        <AssignDialog
+          worker={worker}
+          role={d.role}
+          onClose={() => setAssignOpen(false)}
+          onConfirm={(project, role, startIso) => {
+            onSave(
+              {
+                name: worker.name,
+                coordinator: PROJECT_COORD[project] ?? worker.coordinator,
+                project,
+                status: "Assigned to a project",
+              },
+              { role, assignStart: isoToDisp(startIso), pendingSince: undefined },
+            );
+            setAssignOpen(false);
+            setTermNote(`${worker.name} (${worker.id}) assigned to ${project} — starting ${isoToDisp(startIso)}.`);
           }}
         />
       )}
@@ -1089,6 +1601,7 @@ const css = `
 .wk-search input{flex:1;border:0;background:transparent;outline:none;font-size:13.5px;color:var(--text)}
 .wk-toolbar .sm-btn{height:34px;padding:0 12px;font-size:13.5px}
 .wk-toolbar .sm-btn.is-open{border-color:var(--green);color:var(--green)}
+
 .wk-density{margin-left:auto;display:flex;padding:3px;border:1px solid var(--line);border-radius:8px;background:var(--hover)}
 .wk-density button{width:34px;height:30px;display:grid;place-items:center;border-radius:6px}
 .wk-density button.is-on{background:var(--green-soft);color:var(--green)}
@@ -1113,6 +1626,7 @@ html[data-theme="dark"] .sm-pill.info{background:#1f3350;color:#9db8ff}
 .wd-head-btns{display:flex;gap:8px;flex:none}
 .wd-head .sm-btn,.wd-panel-head .sm-btn,.wd-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;font-size:13px;line-height:1;white-space:nowrap}
 .wd-head .sm-btn svg,.wd-panel-head .sm-btn svg,.wd-btn svg{width:14px;height:14px;flex:none}
+
 
 .wd-sum{display:grid;grid-template-columns:1.55fr 1fr 1.1fr 1fr 1.2fr 1fr 1fr;padding:0;margin-bottom:10px;overflow:hidden}
 .wd-sum>div{padding:10px 12px 11px;border-left:1px solid var(--line);min-width:0}
@@ -1141,7 +1655,7 @@ html[data-theme="dark"] .sm-pill.info{background:#1f3350;color:#9db8ff}
 .wd-panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
 .wd-panel-head h3,.wd-sub{margin:0;font-size:14px;font-weight:600;color:var(--text)}
 .wd-sub{margin:16px 0 6px}
-.wd-kv{display:grid;grid-template-columns:190px 1fr;gap:9px 14px;margin:0;font-size:13.5px;line-height:1.35}
+.wd-kv{display:grid;grid-template-columns:190px 1fr;gap:9px 14px;margin-bottom:14px;font-size:13.5px;line-height:1.35}
 .wd-kv dt{color:var(--muted)}
 .wd-kv dd{margin:0;color:var(--text)}
 .wd-muted{color:var(--muted)}
@@ -1166,7 +1680,7 @@ html[data-theme="dark"] .sm-pill.info{background:#1f3350;color:#9db8ff}
 .wd-link{padding:0;color:var(--green);font-size:13px;font-weight:500;cursor:pointer;background:none}
 .wd-add{display:inline-flex;align-items:center;gap:8px;margin:6px 0 6px 28px;padding:0;color:var(--green);font-size:13px;font-weight:500;cursor:pointer;background:none}
 .wd-event{display:flex;flex-direction:column;gap:6px;padding:4px}
-.wd-event strong{font-size:14px}
+.wd-event strong{font-size:14px;font-weight:600}
 .wd-event span{color:var(--muted);font-size:13px}
 
 @media (max-width:1100px){
@@ -1209,14 +1723,76 @@ html[data-theme="dark"] .sm-pill.info{background:#1f3350;color:#9db8ff}
 .tm-select svg{position:absolute;right:9px;top:8px;width:15px;height:15px;pointer-events:none;color:var(--muted)}
 .tm-note{margin:0 0 12px;font-size:12px;line-height:1.5;color:var(--muted)}
 .tm-note strong{color:var(--text);font-weight:600}
-.tm-submit{height:32px;padding:0 14px;font-size:13px;font-weight:600;border-radius:8px}
+.tm-submit{height:32px;padding:0 14px;font-size:14px;font-weight:500;border-radius:8px}
 .tm-submit:disabled{opacity:.5;cursor:default}
 @media (max-width:640px){
   .tm-grid{grid-template-columns:1fr}
 }
 
+/* ---- Transfer to another project dialog ---- */
+.tm-dialog.tr-dialog{max-width:640px;padding:24px 28px 26px;border-radius:19px}
+.tr-dialog .tm-head{margin-bottom:20px}
+.tr-dialog .tm-head h2{font-size:18px}
+.tr-dialog .tm-field{font-size:13px;gap:7px}
+.tr-dialog .tm-field input,.tr-dialog .tm-select select{height:38px;font-size:13px;padding:0 12px;border-radius:9px}
+.tr-dialog .tm-select svg{top:12px}
+.tr-dialog .tm-grid{gap:16px 18px;margin-bottom:18px}
+.tr-dialog .tm-submit{height:36px;padding:0 18px;font-size:14px;border-radius:9px;border:none}
+
 /* slim rounded scrollbar inside the dialogs */
 .tm-dialog::-webkit-scrollbar{width:10px}
 .tm-dialog::-webkit-scrollbar-track{background:transparent;margin:14px 0}
 .tm-dialog::-webkit-scrollbar-thumb{background:var(--line);border-radius:999px;border:2px solid transparent;background-clip:padding-box}
+
+
+
+/* ---- Accommodation Check In modal ---- */
+.ci-overlay{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(30,38,32,.38);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.ci-modal{width:680px;max-width:100%;max-height:calc(100vh - 40px);overflow-y:auto;padding:30px;background:#fff;color:#202820;border-radius:19px;box-shadow:0 20px 60px rgba(0,0,0,.18)}
+.ci-header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:24px}
+.ci-header h2{margin:0;font-size:16px;line-height:1.3;font-weight:600;color:#202820}
+.ci-close{display:grid;place-items:center;width:28px;height:28px;padding:0;border:0;border-radius:8px;background:transparent;color:#68736c;cursor:pointer}
+.ci-close:hover{background:#f2f2f2;color:#202820}
+.ci-field{display:flex;flex-direction:column;gap:8px;min-width:0;color:#626c65;font-size:13px;font-weight:500}
+.ci-field b{font-weight:600}
+.ci-field input,.ci-select select{height:39px;box-sizing:border-box;border:1px solid #d5dcd5;border-radius:10px;padding:0 14px;background:#fff;color:#252b26;font:inherit;font-size:14px;outline:none}
+.ci-field input:focus,.ci-select select:focus{border-color:#278348;box-shadow:0 0 0 2px rgba(39,131,72,.1)}
+.ci-select{position:relative;display:block;width:100%}
+.ci-select select{width:100%;appearance:none;padding-right:38px}
+.ci-select svg{position:absolute;right:12px;top:11px;color:#68736c;pointer-events:none}
+.ci-date{width:356px;max-width:100%;margin-top:18px}
+.ci-note{margin:20px 0 16px;color:#68736c;font-size:13px;line-height:1.55}
+.ci-submit{height:40px;padding:0 18px;border:0;border-radius:10px;background:#167538;color:#fff;font-size:14px;font-weight:600;cursor:pointer;transition:background-color .18s ease}
+.ci-submit:hover{background:#125f2d}
+.ci-submit:disabled{opacity:.5;cursor:not-allowed}
+.ci-modal::-webkit-scrollbar{width:10px}
+.ci-modal::-webkit-scrollbar-track{background:transparent;margin:14px 0}
+.ci-modal::-webkit-scrollbar-thumb{background:#d5dcd5;border-radius:999px;border:2px solid transparent;background-clip:padding-box}
+@media(max-width:650px){.ci-modal{padding:22px}.ci-header{margin-bottom:22px}.ci-date{width:100%}}
+
+/* ---- Update SP Record modal ---- */
+.sp-modal-overlay{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(30,38,32,.38);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.sp-modal{width:680px;max-width:100%;max-height:calc(100vh - 40px);overflow-y:auto;padding:30px;background:#fff;color:#202820;border-radius:19px;box-shadow:0 20px 60px rgba(0,0,0,.18)}
+.sp-modal-header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:24px}
+.sp-modal-header h2{margin:0;font-size:18px;line-height:1.3;font-weight:650;color:#202820}
+.tm-close{display:grid;place-items:center;width:28px;height:28px;padding:0;border:0;border-radius:8px;background:transparent;box-shadow:none;outline:none;color:var(--muted);cursor:pointer}
+.tm-close:hover{background: #f2f2f2;color:var(--text)}
+.tm-close:focus,.tm-close:focus-visible,.tm-close:active{background:transparent;box-shadow:none;outline:none}
+.sp-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px 16px}
+.sp-field{display:flex;flex-direction:column;gap:8px;min-width:0;color:#626c65;font-size:13px;font-weight:500}
+.sp-field input{width:100%;min-height:42px;box-sizing:border-box;border:1px solid #d5dcd5;border-radius:10px;padding:9px 13px;background:#fff;color:#252b26;font:inherit;font-size:13px;outline:none}
+.sp-field input:focus{border-color:#278348;box-shadow:0 0 0 2px rgba(39,131,72,.1)}
+.sp-evidence{margin-top:18px}
+.sp-evidence input[type=file]{padding:6px 12px}
+.sp-evidence small{color:#68736c;font-size:12px;font-weight:400}
+.sp-verify{display:flex;align-items:flex-start;gap:12px;margin-top:20px;color:#303730;font-size:13px;line-height:1.5;cursor:pointer}
+.sp-verify input{width:18px;height:18px;margin:1px 0 0;accent-color:#167538;flex:none}
+.sp-help-text{margin:12px 0 17px;color:#68736c;font-size:12px;line-height:1.55}
+.sp-modal-footer{display:flex;justify-content:flex-start}
+.sp-save-btn{min-height:40px;padding:0 16px;border:0;border-radius:10px;background:#167538;color:#fff;font-size:14px;font-weight:600;cursor:pointer;transition:background-color .2s ease}
+.sp-save-btn:hover{background:#125f2d}
+.sp-modal::-webkit-scrollbar{width:10px}
+.sp-modal::-webkit-scrollbar-track{background:transparent;margin:14px 0}
+.sp-modal::-webkit-scrollbar-thumb{background:#d5dcd5;border-radius:999px;border:2px solid transparent;background-clip:padding-box}
+@media(max-width:650px){.sp-modal{padding:22px}.sp-form-grid{grid-template-columns:1fr}}
 `;
