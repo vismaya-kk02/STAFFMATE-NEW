@@ -3,17 +3,35 @@ import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   ChevronDown, ChevronRight, Download, Search, SlidersHorizontal, AlignJustify, Menu, X,
-  UserX, Pencil, Check, Plus, ArrowRightLeft, CalendarX2, LogIn, FileText, CloudUpload, BadgeCheck,
-  Ban, TrendingUp, ClipboardList, UserCheck,
+  Check, Plus, LogIn, LogOut, ArrowRightLeft, FileText, CloudUpload, Ban, BadgeCheck,
 } from "lucide-react";
 import AddWorkerPage from "./AddWorkerPage"; // <- adjust the path to where your Add Worker dialog lives
-import WorkerTable, { STATUS_PILL } from "../components/WorkerTable";
+import WorkerTable, { STATUS_PILL, AS_OF } from "../components/WorkerTable";
 import WorkerFilters, { NO_FILTERS, hasActiveFilters, matchesFilters } from "../components/WorkerFilters";
 import type { Filters } from "../components/WorkerFilters";
 
 /* ---------- Types (exported: the table and filter components import them) ---------- */
 export type WorkerStatus = "Assigned to a project" | "Available" | "In preparation" | "Terminated" | "Did not start";
-export type SpState = "Registered" | "No evidence" | "Uploaded, awaiting verification";
+export type SpState = "Registered" | "No evidence" | "Uploaded, awaiting verification" | "Deregistered";
+
+/** A coordinator asked for this (available) worker: shown on the "Coordinator interest" tab. */
+export interface InterestInfo {
+  coordinator: string;
+  date: string;
+  project: string;
+  reason: string;
+  next: string;
+}
+
+/** A report sent by a coordinator: shown on the "Coordinator reports" tab. */
+export interface ReportInfo {
+  kind: string;
+  from: string;
+  date: string;
+  details: string;
+  /** "Expected departure" reports get Begin termination / Acknowledge instead of Open. */
+  departure?: boolean;
+}
 
 export interface Worker {
   id: string;
@@ -26,8 +44,29 @@ export interface Worker {
   blocked?: boolean;
   intended?: boolean;
   docsMissing?: number;
+  /** Documents uploaded but not verified yet ("N pending" in the Documentation column). */
+  docsPending?: number;
+  /** Termination was started; waiting for the SP deregistration document ("Awaiting termination documentation"). */
+  terminating?: boolean;
+  /** Documents that have expired ("N expired" in the Documentation column). */
+  docsExpired?: number;
+  /** The assignment was ended, so the next step is to reassign or terminate. */
+  ended?: boolean;
+  /** Date the pending action started ("01 Sep 2026"); the list shows it with the number of days. */
+  pendingSince?: string;
   coordinatorInterest?: boolean;
   coordinatorReport?: boolean;
+  /** Details for the Coordinator interest tab. */
+  interest?: InterestInfo;
+  /** Details for the Coordinator reports tab. */
+  report?: ReportInfo;
+  /** Terminated tab: effective termination date, date it was confirmed, Labour Office record date (empty = "Not recorded"). */
+  termEffective?: string;
+  termConfirmed?: string;
+  labourOffice?: string;
+  /** Did not start tab: date the case was closed and the start date that was expected. */
+  closedOn?: string;
+  expectedStart?: string;
 }
 
 /* ---------- Data (57 workers) ---------- */
@@ -46,14 +85,30 @@ const available = (id: string, name: string, coordinator: string, extra: Partial
   id, name, status: "Available", project: null, coordinator, accommodation: null, sp: "Registered", ...extra,
 });
 
+// Coordinator interest (the report text on the reports tab is built from the same data, so they never differ)
+const DMYTRO_INTEREST: InterestInfo = {
+  coordinator: PETER, date: "01 Sep 2026", project: "Line 3 Assembly",
+  reason: "Client requested a reserve candidate for the November ramp-up", next: "Confirm with client by 20 Sep",
+};
+const ELENA_INTEREST: InterestInfo = {
+  coordinator: PETER, date: "07 Sep 2026", project: "Line 3 Assembly",
+  reason: "Needs two more operators from 21 Sep", next: "Administration to confirm start date",
+};
+const interestReport = (i: InterestInfo): ReportInfo => ({
+  kind: "Interest in available worker", from: i.coordinator, date: i.date, details: `${i.project} — ${i.reason}`,
+});
+
 const NAMED: Worker[] = [
   assigned("SM-0432", "Andrei Rusu", "Warehouse Ops"),
-  assigned("SM-1136", "Andriy Georgiev", "CNC Machining Hall", { coordinatorInterest: true }),
-  assigned("SM-1143", "Andriy Le", "Line 3 Assembly", { coordinatorReport: true }),
+  assigned("SM-1136", "Andriy Georgiev", "CNC Machining Hall"),
+  assigned("SM-1144", "Andriy Shevchuk", "CNC Machining Hall"),
+  assigned("SM-1139", "Bohdan Georgiev", "CNC Machining Hall"),
+  assigned("SM-0981", "Marko Jovanović", "Line 3 Assembly", { accommodation: "Hostel Nitra Central", docsExpired: 1 }),
+  assigned("SM-1143", "Andriy Le", "Line 3 Assembly"),
   assigned("SM-1148", "Andriy Popa", "Warehouse Ops"),
-  assigned("SM-1137", "Bohdan Tran", "CNC Machining Hall", { coordinatorInterest: true }),
-  assigned("SM-1124", "Cristian Savchenko", "Line 3 Assembly", { coordinatorReport: true }),
-  assigned("SM-1135", "Dejan Marković", "CNC Machining Hall", { coordinatorReport: true }),
+  assigned("SM-1137", "Bohdan Tran", "CNC Machining Hall"),
+  assigned("SM-1124", "Cristian Savchenko", "Line 3 Assembly"),
+  assigned("SM-1135", "Dejan Marković", "CNC Machining Hall"),
   assigned("SM-1138", "Dragan Jovanović", "AutoParts Slovakia"),
   // AutoParts Slovakia roster (so clicking a name on the Projects page opens the right profile)
   assigned("SM-1113", "Dragan Pavlović", "AutoParts Slovakia"),
@@ -71,22 +126,36 @@ const NAMED: Worker[] = [
   assigned("SM-1123", "Vasile Jovanović", "Warehouse Ops"),
   assigned("SM-1126", "Vasile Kravets", "Warehouse Ops"),
   assigned("SM-1121", "Vlad Moldovan", "Warehouse Ops"),
-  available("SM-1154", "Andriy Ionescu", JANA),
-  available("SM-1149", "Anh Popa", PETER, { project: "Line 3 Assembly", blocked: true, sp: "No evidence" }),
-  available("SM-0754", "Dmytro Kovalenko", PETER, { sp: "Uploaded, awaiting verification" }),
-  available("SM-0876", "Elena Popescu", JANA, { accommodation: "Villa Rezidencia Trnava" }),
-  available("SM-1042", "Ivan Petrenko", JANA, { project: "AutoParts Slovakia", blocked: true, sp: "No evidence", accommodation: "Villa Rezidencia Trnava" }),
-  available("SM-0922", "Marko Jovanović", PETER),
-  available("SM-0934", "Nikola Ionescu", JANA, { sp: "Uploaded, awaiting verification" }),
-  available("SM-0947", "Petar Marković", PETER),
-  available("SM-0958", "Taras Georgiev", JANA),
-  { id: "SM-1158", name: "Dragan Savchenko", status: "In preparation", project: null, coordinator: JANA, accommodation: null, sp: "No evidence", docsMissing: 0 },
-  { id: "SM-1157", name: "Minh Koval", status: "In preparation", project: null, coordinator: PETER, accommodation: null, sp: "No evidence", docsMissing: 0 },
-  { id: "SM-1103", name: "Nguyen Van An", status: "In preparation", project: "Packaging Line B", intended: true, coordinator: PETER, accommodation: null, sp: "No evidence", docsMissing: 3 },
-  { id: "SM-0610", name: "Viorel Koval", status: "Terminated", project: null, coordinator: JANA, accommodation: null, sp: "Registered", docsMissing: 2 },
-  { id: "SM-0611", name: "Oleh Bondar", status: "Terminated", project: null, coordinator: PETER, accommodation: null, sp: "Registered" },
-  { id: "SM-0612", name: "Ruslan Hrytsenko", status: "Terminated", project: null, coordinator: JANA, accommodation: null, sp: "Registered" },
-  { id: "SM-1160", name: "Stefan Moldovan", status: "Did not start", project: null, coordinator: PETER, accommodation: null, sp: "No evidence" },
+  available("SM-1154", "Andriy Ionescu", JANA, { terminating: true, pendingSince: "01 Sep 2026", termEffective: "01 Sep 2026" }),
+  available("SM-1149", "Anh Popa", PETER, { project: "Line 3 Assembly", blocked: true, sp: "No evidence", pendingSince: "07 Sep 2026" }),
+  available("SM-0754", "Dmytro Kovalenko", PETER, {
+    sp: "Uploaded, awaiting verification", docsPending: 1, ended: true, pendingSince: "31 Aug 2026",
+    coordinatorInterest: true, interest: DMYTRO_INTEREST,
+    coordinatorReport: true, report: interestReport(DMYTRO_INTEREST),
+  }),
+  available("SM-0876", "Elena Popescu", JANA, {
+    accommodation: "Villa Rezidencia Trnava", ended: true, pendingSince: "28 Aug 2026",
+    coordinatorInterest: true, interest: ELENA_INTEREST,
+    coordinatorReport: true, report: interestReport(ELENA_INTEREST),
+  }),
+  available("SM-1042", "Ivan Petrenko", JANA, { project: "AutoParts Slovakia", blocked: true, sp: "No evidence", accommodation: "Villa Rezidencia Trnava", pendingSince: "05 Sep 2026" }),
+  available("SM-1150", "Nikola Ionescu", JANA, { project: "CNC Machining Hall", blocked: true, sp: "Uploaded, awaiting verification", docsPending: 1, pendingSince: "03 Sep 2026" }),
+  available("SM-0947", "Petar Marković", JANA, { ended: true, pendingSince: "21 Aug 2026" }),
+  available("SM-0958", "Taras Georgiev", JANA, {
+    ended: true, pendingSince: "04 Sep 2026",
+    coordinatorReport: true,
+    report: { kind: "Expected departure", from: PETER, date: "30 Sep 2026", details: "Contract with factory ends; proposed by coordinator", departure: true },
+  }),
+  available("SM-1153", "Viorel Koval", JANA, { terminating: true, pendingSince: "04 Sep 2026", termEffective: "04 Sep 2026" }),
+  { id: "SM-1158", name: "Dragan Savchenko", status: "In preparation", project: null, coordinator: JANA, accommodation: null, sp: "No evidence", docsMissing: 0, pendingSince: "01 Sep 2026" },
+  { id: "SM-1157", name: "Minh Koval", status: "In preparation", project: null, coordinator: PETER, accommodation: null, sp: "No evidence", docsMissing: 0, pendingSince: "20 Sep 2026" },
+  { id: "SM-1103", name: "Nguyen Van An", status: "In preparation", project: "Packaging Line B", intended: true, coordinator: PETER, accommodation: null, sp: "No evidence", docsMissing: 3, pendingSince: "11 Sep 2026" },
+  // Terminated
+  { id: "SM-1155", name: "Maksym Nguyen", status: "Terminated", project: null, coordinator: JANA, accommodation: null, sp: "Deregistered", termEffective: "28 Aug 2026", termConfirmed: "05 Sep 2026" },
+  { id: "SM-0119", name: "Pavlo Shevchenko", status: "Terminated", project: null, coordinator: "—", accommodation: null, sp: "Deregistered", termEffective: "31 Jul 2026", termConfirmed: "04 Aug 2026", labourOffice: "06 Aug 2026" },
+  { id: "SM-1156", name: "Viorel Dimitrov", status: "Terminated", project: null, coordinator: JANA, accommodation: "Hostel Nitra Central", sp: "Deregistered", termEffective: "03 Sep 2026", termConfirmed: "04 Sep 2026", labourOffice: "08 Sep 2026" },
+  // Did not start
+  { id: "SM-1159", name: "Yuriy Nguyen", status: "Did not start", project: null, coordinator: PETER, accommodation: null, sp: "No evidence", closedOn: "25 Aug 2026", expectedStart: "20 Aug 2026" },
 ];
 
 const FIRST = ["Adrian", "Bogdan", "Cătălin", "Daniel", "Emil", "Filip", "Gabriel", "Hanna", "Igor", "Jakub", "Kamil", "Lukáš", "Marian", "Nadiia", "Ondrej", "Pavlo", "Radovan", "Sergiy", "Tibor", "Viktor", "Yuriy", "Zoltán"];
@@ -101,7 +170,8 @@ function buildWorkers(): Worker[] {
     if (used.has(name)) continue;
     used.add(name);
     const project = PROJECT_LIST[n % PROJECT_LIST.length];
-    list.push(assigned(`SM-${1170 + n}`, name, project, n < 3 ? { accommodation: "Hostel Nitra Central" } : {}));
+    // only the four workers named above are accommodated, so the Accommodated tab shows 4
+    list.push(assigned(`SM-${1170 + n}`, name, project));
     n++;
   }
   return list.sort((a, b) => a.name.localeCompare(b.name));
@@ -125,6 +195,20 @@ const TABS: { key: string; label: string; match: (w: Worker) => boolean }[] = [
 
 /** Turn the ?tab= value from the URL into a valid tab key (falls back to "all"). */
 const tabFromUrl = (k: string | null) => (TABS.some((t) => t.key === k) ? (k as string) : "all");
+
+/* ---------- Views (the "View:" dropdown above the table) ---------- */
+// A view narrows the rows of whichever tab is open (the two filters combine).
+const VIEWS: { key: string; label: string; match: (w: Worker) => boolean }[] = [
+  { key: "all", label: "View: All workers", match: () => true },
+  { key: "pending", label: "View: Pending action", match: isPending },
+  {
+    key: "sp",
+    label: "View: Social insurance not verified",
+    match: (w) => w.sp === "No evidence" || w.sp === "Uploaded, awaiting verification",
+  },
+  { key: "placement", label: "View: Available for placement", match: (w) => w.status === "Available" },
+  { key: "termdocs", label: "View: Awaiting termination documents", match: (w) => !!w.terminating },
+];
 
 /** Resets the window and any scrolled container (the app shell may scroll inside <main>, not the window). */
 const resetScroll = () => {
@@ -177,6 +261,8 @@ interface WorkerDetailInfo {
   empStart: string; employer: string; spFrom: string; deregFrom: string; verifiedBy: string; spFile: string;
   createdOn: string; createdBy: string; assignStart: string;
   accommodationStart?: string;
+  /** Confirmation file of the Labour Office record (set by the "Record Labour Office notification" dialog). */
+  labourFile?: string;
   /** Set when an assignment was ended: the day the worker became Available again ("09 Sep 2026"). */
   pendingSince?: string;
   docs: DocItem[];
@@ -199,10 +285,20 @@ const DETAIL_OVERRIDES: Record<string, Partial<WorkerDetailInfo>> = {
     verifiedBy: "Marek Máhr, 02 Jun 2021", createdOn: "15 May 2021", createdBy: "Jana Kollárová", assignStart: "05 Jun 2021",
   },
   "SM-0754": { role: "Forklift Operator", nationality: "Ukraine", country: "Ukraine", empStart: "20 Apr 2025" },
+  "SM-1153": {
+    dob: "14 Sep 2000", nationality: "Vietnam", role: "Assembler", telephone: "+421 900 305 552",
+    country: "Vietnam", empStart: "01 Oct 2024",
+  },
+  // Accommodated workers: stay start dates shown on the Accommodated tab (and the worker's Accommodation tab)
+  "SM-0876": { accommodationStart: "15 Mar 2025" },
   "SM-1042": {
     dob: "14 Mar 1991", nationality: "Ukraine", role: "Production Operator", telephone: "+421 900 111 001",
-    country: "Ukraine", empStart: "03 Feb 2025",
+    country: "Ukraine", empStart: "03 Feb 2025", accommodationStart: "03 Feb 2025",
   },
+  "SM-0981": { empStart: "05 Mar 2022", assignStart: "05 Mar 2022", accommodationStart: "15 Jan 2025" },
+  "SM-1156": { accommodationStart: "15 Feb 2024" },
+  // Did not start
+  "SM-1159": { workStart: "20 Aug 2026" },
   // AutoParts Slovakia roster (matches Projects → project detail → Workers)
   "SM-1113": {
     role: "Machine Operator", nationality: "Bulgaria", country: "Bulgaria",
@@ -222,10 +318,20 @@ const DETAIL_OVERRIDES: Record<string, Partial<WorkerDetailInfo>> = {
   "SM-1123": { role: "Forklift Operator" },
   "SM-1126": { role: "Packer" },
   "SM-1121": { role: "Machine Operator" },
+  // Assignment start dates shown on the list (Assigned tab)
+  "SM-1136": { empStart: "10 Apr 2025", assignStart: "10 Apr 2025" },
+  "SM-1143": { empStart: "10 Aug 2026", assignStart: "10 Aug 2026" },
+  "SM-1148": { empStart: "01 Sep 2026", assignStart: "01 Sep 2026" },
+  "SM-1144": { empStart: "17 Aug 2026", assignStart: "17 Aug 2026" },
+  // Planned dates shown on the list (In preparation tab)
+  "SM-1158": { arrival: "30 Aug 2026", workStart: "01 Sep 2026" },
+  "SM-1157": { arrival: "20 Sep 2026", workStart: "24 Sep 2026" },
+  "SM-1103": { arrival: "11 Sep 2026", workStart: "15 Sep 2026" },
 };
 
 const ROLES = ["Warehouse Associate", "Forklift Operator", "CNC Operator", "Line Assembler", "Packer", "Quality Inspector"];
 const COUNTRIES = ["Moldova", "Ukraine", "Serbia", "Romania", "Vietnam", "Georgia"];
+const START_DATES = ["12 Feb 2024", "19 Mar 2024", "14 Jun 2024", "22 Sep 2024", "17 Mar 2025", "20 Jul 2025", "18 Sep 2025", "02 Sep 2026"];
 
 // Stable pick based on the worker ID, so the same worker always gets the same values
 const pick = <T,>(list: T[], id: string, salt = 0): T => {
@@ -235,25 +341,28 @@ const pick = <T,>(list: T[], id: string, salt = 0): T => {
 
 const detailFor = (w: Worker): WorkerDetailInfo => {
   const missing = w.docsMissing ?? 0;
+  // assigned workers without a recorded date get a stable sample start date
+  const startFallback = w.status === "Assigned to a project" ? pick(START_DATES, w.id) : "—";
   const base: WorkerDetailInfo = {
     dob: "—", nationality: pick(COUNTRIES, w.id, 7), role: pick(ROLES, w.id), telephone: "—", email: "—", address: "—",
     country: pick(COUNTRIES, w.id, 7), prepStage: w.status === "In preparation" ? "In progress" : "Complete", arrival: "—", workStart: "—",
-    empStart: "—", employer: "Staffmate s.r.o.", spFrom: "—", deregFrom: "—", verifiedBy: "—",
-    spFile: w.sp === "Registered" ? "sp_confirmation.pdf" : "—",
-    createdOn: "—", createdBy: w.coordinator, assignStart: "—",
+    empStart: startFallback, employer: "Staffmate s.r.o.", spFrom: "—", deregFrom: w.status === "Terminated" ? (w.termEffective ?? "—") : "—", verifiedBy: "—",
+    spFile: w.sp === "Registered" || w.sp === "Deregistered" ? "sp_confirmation.pdf" : "—",
+    createdOn: "—", createdBy: w.coordinator, assignStart: startFallback,
     docs: DOC_TEMPLATE.map((d, i) => (i < missing ? { ...d, files: [], verified: false } : { ...d, verified: true })),
   };
   return { ...base, ...(DETAIL_OVERRIDES[w.id] ?? {}) };
 };
 
 /* ---------- Pending action (status card on the detail page) ---------- */
-const AS_OF = "2026-09-09"; // same "as of" date as the other pages
 const daysSince = (iso: string) => Math.round((Date.parse(AS_OF) - Date.parse(iso)) / 86400000);
 
-const pendingLabel = (w: Worker): string => (w.status === "Did not start" ? "Did-not-start check" : w.status);
+const pendingLabel = (w: Worker): string =>
+  w.terminating ? "Awaiting termination documentation" : w.status === "Did not start" ? "Did-not-start check" : w.status;
 /** `ended` = the worker's assignment was just ended, so the next step is to reassign or terminate. */
 const pendingHint = (w: Worker, ended = false): string | null =>
-  w.status === "Available"
+  w.terminating ? "Upload and verify the Social Insurance deregistration document."
+  : w.status === "Available"
     ? (ended
         ? "Reassign to a project, or begin termination."
         : w.sp !== "Registered" ? "Verify Social Insurance evidence to activate the assignment." : "Assign the worker to a project.")
@@ -261,7 +370,9 @@ const pendingHint = (w: Worker, ended = false): string | null =>
     : w.status === "Did not start" ? "Complete the did-not-start check."
     : null;
 
-const SP_TONE: Record<SpState, string> = { Registered: "ok", "No evidence": "bad", "Uploaded, awaiting verification": "warn" };
+const SP_TONE: Record<SpState, string> = {
+  Registered: "ok", "No evidence": "bad", "Uploaded, awaiting verification": "warn", Deregistered: "muted",
+};
 
 function WPill({ tone, children }: { tone: string; children: React.ReactNode }): React.JSX.Element {
   return <span className={`sm-pill ${tone} wd-pill`}>{children}</span>;
@@ -328,7 +439,7 @@ function TerminationDialog({ worker, onClose, onConfirm }: {
           {worker.project && <><br />The current assignment ends on the effective date.</>}
         </p>
 
-        <button type="button" className="sm-btn sm-btn-primary tm-submit" disabled={!date} onClick={() => onConfirm(date, reason)}>
+        <button type="button" className="sm-btn sm-btn-primary tm-submit"  onClick={() => onConfirm(date, reason)}>
           Begin termination
         </button>
       </div>
@@ -363,6 +474,12 @@ interface ProfilePatch {
   project?: string | null;
   accommodation?: string | null;
   status?: WorkerStatus;
+  terminating?: boolean;
+  ended?: boolean;
+  pendingSince?: string;
+  termEffective?: string;
+  termConfirmed?: string;
+  labourOffice?: string;
 }
 
 function EditProfileDialog({ worker, d, onClose, onSave }: {
@@ -480,7 +597,7 @@ function UpdateSPRecordModal({
   const [effectiveFrom, setEffectiveFrom] = useState(dispToIso(details.spFrom));
   const [deregistration, setDeregistration] = useState(dispToIso(details.deregFrom));
   const [evidence, setEvidence] = useState<File | null>(null);
-  const [verified, setVerified] = useState(worker.sp === "Registered");
+  const [verified, setVerified] = useState(worker.sp === "Registered" || worker.sp === "Deregistered");
 
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
@@ -503,7 +620,8 @@ function UpdateSPRecordModal({
 
     let nextSp: SpState;
     if (!hasEvidence) nextSp = "No evidence";
-    else if (verified && effectiveNow && !deregistered) nextSp = "Registered";
+    else if (deregistered) nextSp = "Deregistered";
+    else if (verified && effectiveNow) nextSp = "Registered";
     else nextSp = "Uploaded, awaiting verification";
 
     onSave(
@@ -606,6 +724,7 @@ function UpdateSPRecordModal({
 /* ---------- Accommodation check-in dialog ---------- */
 const CHECK_IN_FACILITIES = [
   { name: "Villa Rezidencia Trnava", available: 38 },
+  { name: "Hostel Nitra Central", available: 26 },
 ];
 
 function CheckInDialog({
@@ -692,6 +811,93 @@ function CheckInDialog({
             onClick={() => onConfirm(facility, date)}
           >
             Check In
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/* ---------- Transfer facility dialog (worker is already accommodated) ---------- */
+function TransferFacilityDialog({ worker, onClose, onConfirm }: {
+  worker: Worker;
+  onClose: () => void;
+  onConfirm: (facility: string, dateIso: string) => void;
+}): React.JSX.Element {
+  // the worker's current facility is not offered as a target
+  const options = CHECK_IN_FACILITIES.filter((f) => f.name !== worker.accommodation);
+  const [facility, setFacility] = useState(options.find((f) => f.available > 0)?.name ?? options[0]?.name ?? "");
+  const [date, setDate] = useState(AS_OF);
+
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKey);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", handleKey);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [onClose]);
+
+  const selected = options.find((f) => f.name === facility);
+  const canTransfer = !!selected && selected.available > 0 && !!date;
+
+  return createPortal(
+    <div
+      className="ci-overlay"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="ci-modal ci-transfer" role="dialog" aria-modal="true" aria-labelledby="tf-title">
+        <div className="ci-header">
+          <h2 id="tf-title">Transfer {worker.name} to another facility</h2>
+          <button type="button" className="ci-close" onClick={onClose} aria-label="Close">
+            <X size={19} />
+          </button>
+        </div>
+
+        <div className="ci-body">
+          <label className="ci-field ci-facility">
+            <span>Facility <b>*</b></span>
+            <span className="ci-select">
+              <select value={facility} onChange={(event) => setFacility(event.target.value)} required>
+                {options.map((item) => (
+                  <option key={item.name} value={item.name} disabled={item.available <= 0}>
+                    {item.name} ({item.available} available)
+                  </option>
+                ))}
+              </select>
+              <ChevronDown size={17} />
+            </span>
+          </label>
+
+          <label className="ci-field ci-date">
+            <span>Actual Check-in Date</span>
+            <input
+              type="date"
+              value={date}
+              onChange={(event) => setDate(event.target.value)}
+              required
+            />
+          </label>
+
+          <p className="ci-note">
+            Occupancy is calculated from actual check-ins, not planned arrivals — this stay counts against
+            capacity immediately. A facility at full capacity cannot be selected.
+          </p>
+
+          <button
+            type="button"
+            className="ci-submit"
+            disabled={!canTransfer}
+            onClick={() => onConfirm(facility, date)}
+          >
+            Transfer
           </button>
         </div>
       </div>
@@ -825,9 +1031,171 @@ function AssignDialog({ worker, role: currentRole, onClose, onConfirm }: {
   );
 }
 
-function WorkerDetail({ worker, extra, onBack, onSave }: {
+/* ---------- Record Labour Office notification dialog ---------- */
+function LabourOfficeDialog({ worker, onClose, onSave }: {
+  worker: Worker;
+  onClose: () => void;
+  onSave: (dateIso: string, file: string) => void;
+}): React.JSX.Element {
+  const [date, setDate] = useState(AS_OF);
+  const [file, setFile] = useState("labour_office_notice.pdf");
+
+  // Esc closes the dialog
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return createPortal(
+    <div className="tm-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="tm-dialog tr-dialog" role="dialog" aria-modal="true" aria-labelledby="lo-title">
+        <div className="tm-head">
+          <h2 id="lo-title">{worker.name}</h2>
+          <button type="button" className="tm-close" aria-label="Close" onClick={onClose}><X size={18} /></button>
+        </div>
+
+        <div className="tm-grid">
+          <label className="tm-field">
+            <span>Date notified <b>*</b></span>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+          </label>
+          <label className="tm-field">
+            <span>Confirmation file</span>
+            <input value={file} onChange={(e) => setFile(e.target.value)} />
+          </label>
+        </div>
+
+        <p className="tm-note">A record only — it does not change the worker status.</p>
+
+        <button type="button" className="sm-btn sm-btn-primary tm-submit" disabled={!date} onClick={() => onSave(date, file)}>
+          Save record
+        </button>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/* ---------- Tasks & Notes (worker profile tab) ---------- */
+type TaskStatus = "Open" | "In Progress" | "Done";
+interface TaskComment { author: string; text: string }
+interface WorkerTask {
+  id: string;
+  title: string;
+  description: string;
+  assignee: string;
+  creator: string;
+  due: string;
+  priority: "Low" | "Medium" | "High";
+  status: TaskStatus;
+  comments: TaskComment[];
+}
+
+const TASK_STATUSES: TaskStatus[] = ["Open", "In Progress", "Done"];
+const TASK_TONE: Record<TaskStatus, string> = { Open: "muted", "In Progress": "info", Done: "ok" };
+const CURRENT_USER = "Marek Máhr"; // "Viewing as" user, author of new comments
+
+// Tasks linked to a worker (the list shows "<title> — <worker name>")
+const TASKS_BY_WORKER: Record<string, WorkerTask[]> = {
+  "SM-0981": [
+    {
+      id: "T-TRC-0981",
+      title: "Confirm TRC renewal",
+      description: "Follow up with Marko on the renewal appointment and get the updated TRC uploaded.",
+      assignee: "Marek Máhr",
+      creator: PETER,
+      due: "10 Sep 2026",
+      priority: "Medium",
+      status: "In Progress",
+      comments: [],
+    },
+  ],
+};
+
+function TaskDialog({ task, worker, onClose, onStatus, onComment }: {
+  task: WorkerTask;
+  worker: Worker;
+  onClose: () => void;
+  onStatus: (status: TaskStatus) => void;
+  onComment: (text: string) => void;
+}): React.JSX.Element {
+  const [draft, setDraft] = useState("");
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [onClose]);
+
+  const post = () => {
+    const text = draft.trim();
+    if (!text) return;
+    onComment(text);
+    setDraft("");
+  };
+
+  return createPortal(
+    <div className="tk-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="tk-modal" role="dialog" aria-modal="true" aria-labelledby="tk-title">
+        <div className="tk-head">
+          <h2 id="tk-title">{task.title}</h2>
+          <button type="button" className="tk-close" aria-label="Close" onClick={onClose}><X size={20} /></button>
+        </div>
+
+        <dl className="tk-kv">
+          <dt>Description</dt><dd>{task.description}</dd>
+          <dt>Linked</dt><dd>{worker.name}</dd>
+          <dt>Assignee</dt><dd>{task.assignee}</dd>
+          <dt>Creator</dt><dd>{task.creator}</dd>
+          <dt>Due Date</dt><dd>{task.due}</dd>
+          <dt>Priority</dt><dd>{task.priority}</dd>
+        </dl>
+
+        <label className="tk-label" htmlFor="tk-status">Status</label>
+        <span className="tk-select">
+          <select id="tk-status" value={task.status} onChange={(e) => onStatus(e.target.value as TaskStatus)}>
+            {TASK_STATUSES.map((st) => <option key={st} value={st}>{st}</option>)}
+          </select>
+          <ChevronDown size={18} />
+        </span>
+
+        <h3 className="tk-sub">Comments</h3>
+        {task.comments.length === 0 ? (
+          <p className="tk-muted">No comments yet.</p>
+        ) : (
+          <ul className="tk-comments">
+            {task.comments.map((c, i) => (
+              <li key={i}><strong>{c.author}</strong><span>{c.text}</span></li>
+            ))}
+          </ul>
+        )}
+
+        <div className="tk-compose">
+          <input
+            value={draft}
+            placeholder="Add a comment..."
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") post(); }}
+          />
+          <button type="button" onClick={post} disabled={!draft.trim()}>Post</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function WorkerDetail({ worker, extra, startWithTermination = false, onBack, onSave }: {
   worker: Worker;
   extra?: Partial<WorkerDetailInfo>;
+  /** Open the Begin termination dialog right away (used by the Begin termination button on the reports tab). */
+  startWithTermination?: boolean;
   onBack: () => void;
   onSave: (patch: ProfilePatch, extra: Partial<WorkerDetailInfo>) => void;
 }): React.JSX.Element {
@@ -835,13 +1203,76 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
   const [tab, setTab] = useState<DetailTab>("Personal");
   const [docs, setDocs] = useState<DocItem[]>(d.docs);
   const fileRef = useRef<HTMLInputElement>(null);
-  const [termOpen, setTermOpen] = useState(false);
+  const [termOpen, setTermOpen] = useState(startWithTermination && !worker.terminating);
   const [termNote, setTermNote] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [spOpen, setSpOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
   const [checkInOpen, setCheckInOpen] = useState(false);
+  const [transferFacOpen, setTransferFacOpen] = useState(false); // "Transfer Facility" dialog
+  const [labourOpen, setLabourOpen] = useState(false); // "Record Labour Office notification" dialog
+  const [deregFile, setDeregFile] = useState<string | null>(null); // set once the deregistration document is uploaded
+  const [tasks, setTasks] = useState<WorkerTask[]>(() => TASKS_BY_WORKER[worker.id] ?? []);
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const openTask = tasks.find((t) => t.id === openTaskId);
+  const patchTask = (id: string, patch: (t: WorkerTask) => WorkerTask) =>
+    setTasks((list) => list.map((t) => (t.id === id ? patch(t) : t)));
+
+  // Upload the deregistration document (prototype: simulated upload), then wait for verification
+  const uploadDeregistration = () => {
+    setDeregFile("sp_deregistration.pdf");
+  };
+
+  // Verify the document: the worker becomes Terminated and the SP record is deregistered.
+  // Then the "Record Labour Office notification" dialog opens straight away.
+  const completeTermination = () => {
+    onSave(
+      {
+        name: worker.name,
+        coordinator: worker.coordinator,
+        status: "Terminated",
+        sp: "Deregistered",
+        project: null,
+        terminating: false,
+        ended: false,
+        pendingSince: undefined,
+        termConfirmed: isoToDisp(AS_OF),
+      },
+      {
+        pendingSince: undefined,
+        spFile: deregFile ?? "sp_deregistration.pdf",
+      },
+    );
+    setDeregFile(null);
+    setTermNote(`Termination completed for ${worker.name} (${worker.id}). The deregistration document was verified and the status is now Terminated.`);
+    setLabourOpen(true);
+  };
+
+  // Check Out ends the stay straight away (no dialog): the worker becomes "not accommodated",
+  // so the Accommodation tab shows the Check In button again. Status, project and SP are untouched.
+  const checkOut = () => {
+    const facility = worker.accommodation;
+    onSave(
+      { name: worker.name, coordinator: worker.coordinator, accommodation: null },
+      { accommodationStart: undefined },
+    );
+    setTermNote(`${worker.name} (${worker.id}) checked out of ${facility} on ${isoToDisp(AS_OF)}.`);
+  };
+
+  // The "Record Labour Office notification" button opens the dialog
+  const recordLabourOffice = () => setLabourOpen(true);
+
+  // Save the Labour Office record (a record only — the worker status does not change)
+  const saveLabourOffice = (dateIso: string, file: string) => {
+    const recordedDate = isoToDisp(dateIso);
+    onSave(
+      { name: worker.name, coordinator: worker.coordinator, labourOffice: recordedDate },
+      { labourFile: file.trim() || "—" },
+    );
+    setLabourOpen(false);
+    setTermNote(`Labour Office notification recorded for ${worker.name} (${worker.id}) on ${recordedDate}.`);
+  };
 
   // Open at the top (the app shell may have been scrolled down on the list / Projects page)
   useEffect(() => {
@@ -879,7 +1310,7 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
   const endAssignment = () => {
     const endedOn = isoToDisp(AS_OF);
     onSave(
-      { name: worker.name, coordinator: worker.coordinator, project: null, status: "Available" },
+      { name: worker.name, coordinator: worker.coordinator, project: null, status: "Available", ended: true, pendingSince: endedOn },
       { pendingSince: endedOn },
     );
     setTermNote(
@@ -888,13 +1319,13 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
   };
 
   // The worker just came off a project (set by End Assignment)
-  const ended = !!d.pendingSince;
+  const ended = !!(d.pendingSince || worker.ended);
   const hint = pendingHint(worker, ended);
-  const sinceLabel = ended ? (d.pendingSince as string) : d.empStart;
+  const sinceLabel = d.pendingSince ?? worker.pendingSince ?? d.empStart;
   const sinceIso = dispToIso(sinceLabel);
   const pendingDays = sinceIso ? daysSince(sinceIso) : null;
   const sinceText =
-    pendingDays === null ? "" : ended && pendingDays === 0 ? ` Since ${sinceLabel}.` : ` Since ${sinceLabel} · ${pendingDays} days.`;
+    pendingDays === null ? "" : pendingDays <= 0 ? ` Since ${sinceLabel}.` : ` Since ${sinceLabel} · ${pendingDays} days.`;
 
   return (
     <div className="wk-enter">
@@ -913,13 +1344,6 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
         </div>
       )}
 
-      {termNote && (
-        <div className="wk-notice" role="status">
-          <span>{termNote}</span>
-          <button type="button" aria-label="Dismiss" onClick={() => setTermNote(null)}><X size={16} /></button>
-        </div>
-      )}
-
       <section className="sm-card wd-head">
         <div className="wd-avatar">{initials}</div>
         <div className="wd-who">
@@ -927,6 +1351,7 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
           {subtitle && <p>{subtitle}</p>}
         </div>
         <div className="wd-head-btns">
+          {!worker.terminating && (
           <button type="button" className="sm-btn sm-btn-outline" onClick={() => setTermOpen(true)}>
             <img
               src="/images/termination.svg"
@@ -938,6 +1363,7 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
             />{" "}
             Begin termination
           </button>
+          )}
           <button type="button" className="sm-btn sm-btn-outline" onClick={() => setEditOpen(true)}>
             <img
               src="/images/edit.svg"
@@ -967,7 +1393,13 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
         <div>
           <div className="wd-k">Documents</div>
           <div className="wd-v">
-            {worker.docsMissing ? <WPill tone="bad">{worker.docsMissing} missing</WPill> : <WPill tone="ok">Complete</WPill>}
+            {worker.docsMissing
+              ? <WPill tone="bad">{worker.docsMissing} missing</WPill>
+              : worker.docsExpired
+                ? <WPill tone="bad">{worker.docsExpired} expired</WPill>
+                : worker.docsPending
+                  ? <WPill tone="warn">{worker.docsPending} pending</WPill>
+                  : <WPill tone="ok">Complete</WPill>}
           </div>
         </div>
         <div><div className="wd-k">Accommodation</div><div className="wd-v wd-strong">{worker.accommodation ?? "None"}</div></div>
@@ -988,8 +1420,8 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
         </div>
       </section>
 
-      {/* Shown only when there is a pending action (hidden for workers already assigned to a project) */}
-      {hint && (
+      {/* Keep this section visible after termination so the Labour Office step is available. */}
+      {(hint || worker.terminating || worker.status === "Terminated") && (
         <section className="sm-card wd-status">
           <h3 className="wd-status-title">
             <img src="/images/worker_status.svg" alt="" className="wd-status-icon" />
@@ -1004,20 +1436,77 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
             )],
             ["Employment start", d.empStart],
           ])}
-          <div className="wd-pending">
-            <img
-              src="/images/pending_actions.svg"
-              alt=""
-              aria-hidden="true"
-              width={16}
-              height={16}
-              style={{ display: "block", flex: "none" }}
-            />
-            <span>
-              <b>Pending action: {pendingLabel(worker)}</b> — {hint}
-              {sinceText}
-            </span>
-          </div>
+
+          {hint && (
+            <div className={`wd-pending${worker.terminating ? " is-danger" : ""}`}>
+              <img
+                src="/images/pending_actions.svg"
+                alt=""
+                aria-hidden="true"
+                width={16}
+                height={16}
+                style={{ display: "block", flex: "none" }}
+              />
+              <span>
+                <b>Pending action: {pendingLabel(worker)}</b> — {hint}
+                {sinceText}
+              </span>
+            </div>
+          )}
+
+          {(worker.terminating || worker.status === "Terminated") && (
+            <div className="wd-term">
+              <h4>Termination</h4>
+              {kv([
+                ["Effective date", worker.termEffective ?? "—"],
+                ["Deregistration document", worker.status === "Terminated" ? (
+                  <span key="verified">
+                    <WPill tone="ok">Verified by Marek Máhr on {worker.termConfirmed ?? isoToDisp(AS_OF)}</WPill>
+                    <span className="wd-dereg-file">· {d.spFile && d.spFile !== "—" ? d.spFile : "sp_deregistration.pdf"}</span>
+                  </span>
+                ) : deregFile ? (
+                  <span key="uploaded">
+                    <WPill tone="warn">Uploaded — awaiting verification</WPill>
+                    <span className="wd-dereg-file">· {deregFile}</span>
+                  </span>
+                ) : (
+                  <WPill key="missing" tone="bad">Deregistration document missing</WPill>
+                )],
+                ["Labour Office record", worker.labourOffice ? (
+                  <span key="recorded">
+                    <WPill tone="ok">Recorded on {worker.labourOffice}</WPill>
+                    {d.labourFile && d.labourFile !== "—" && <span className="wd-dereg-file">· {d.labourFile}</span>}
+                  </span>
+                ) : (
+                  <span key="not-recorded" className="wd-muted">Not recorded</span>
+                )],
+                ["Accommodation", worker.accommodation ?? "Not accommodated"],
+              ])}
+
+              {worker.terminating && (deregFile ? (
+                <button type="button" className="sm-btn sm-btn-primary" onClick={completeTermination}>
+                  <img src="/images/verifying_complete.svg" alt="" width={16} height={16} aria-hidden="true" />
+                  Verify and complete termination
+                </button>
+              ) : (
+                <button type="button" className="sm-btn sm-btn-outline" onClick={uploadDeregistration}>
+                  <img src="/images/upload_deregistration.svg" alt="" className="sm-btn-icon" width={16} height={16} />
+                  Upload deregistration document
+                </button>
+              ))}
+
+              {worker.status === "Terminated" && !worker.labourOffice && (
+                <button type="button" className="sm-btn sm-btn-outline wd-labour-btn" onClick={recordLabourOffice}>
+                  <img src="/images/record_labour.svg" alt="" width={16} height={16} aria-hidden="true" />
+                  Record Labour Office notification
+                </button>
+              )}
+
+              {worker.status === "Terminated" && worker.labourOffice && (
+                <WPill tone="ok">Labour Office notification recorded on {worker.labourOffice}</WPill>
+              )}
+            </div>
+          )}
         </section>
       )}
 
@@ -1126,6 +1615,8 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
               <tbody>
                 {worker.sp === "Registered" ? (
                   <tr><td>{d.spFrom}</td><td>Current</td><td>Registered (current)</td></tr>
+                ) : worker.sp === "Deregistered" ? (
+                  <tr><td>{d.spFrom}</td><td>{d.deregFrom}</td><td>Deregistered</td></tr>
                 ) : (
                   <tr><td colSpan={3} className="wd-muted">No registration periods yet.</td></tr>
                 )}
@@ -1141,7 +1632,9 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
               src="/images/verified.svg"
               alt=""
               className="wd-verified-icon"
-             width={16}  height={16}/>
+              width={16}
+              height={16}
+            />
             Update SP Record
           </button>
         </section>
@@ -1183,7 +1676,7 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
                   className="sm-btn sm-btn-outline"
                   onClick={() => setAssignOpen(true)}
                 >
-                  <img src="/images/assign.svg" alt="" className="wd-assign-icon" width={16} height={16}/>
+                  <img src="/images/assign.svg" alt="" className="wd-assign-icon" width={16} height={16} />
                   Assign to Project
                 </button>
               )
@@ -1220,7 +1713,20 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
         <section className="sm-card wd-panel">
           <div className="wd-panel-head">
             <h3>Accommodation</h3>
-            <button type="button" className="sm-btn sm-btn-outline" onClick={() => setCheckInOpen(true)}><LogIn size={16} /> Check In</button>
+            {worker.accommodation ? (
+              <div className="wd-head-btns">
+                <button type="button" className="sm-btn sm-btn-outline" onClick={() => setTransferFacOpen(true)}>
+                  <ArrowRightLeft size={16} /> Transfer Facility
+                </button>
+                <button type="button" className="sm-btn sm-btn-outline" onClick={checkOut}>
+                  <LogOut size={16} /> Check Out
+                </button>
+              </div>
+            ) : (
+              <button type="button" className="sm-btn sm-btn-outline" onClick={() => setCheckInOpen(true)}>
+                <LogIn size={16} /> Check In
+              </button>
+            )}
           </div>
           <div className="sm-table-wrap">
             <table className="sm-table wd-table">
@@ -1243,7 +1749,21 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
       )}
 
       {tab === "Tasks & Notes" && (
-        <section className="sm-card wd-panel"><p className="wd-empty">No tasks linked to this worker.</p></section>
+        tasks.length === 0 ? (
+          <section className="sm-card wd-panel"><p className="wd-empty">No tasks linked to this worker.</p></section>
+        ) : (
+          <section className="sm-card wd-tasks">
+            {tasks.map((t) => (
+              <button key={t.id} type="button" className="wd-task" onClick={() => setOpenTaskId(t.id)}>
+                <span className="wd-task-main">
+                  <strong>{t.title} — {worker.name}</strong>
+                  <span>Due {t.due} · {t.priority} priority · Assignee: {t.assignee}</span>
+                </span>
+                <WPill tone={TASK_TONE[t.status]}>{t.status}</WPill>
+              </button>
+            ))}
+          </section>
+        )
       )}
 
       {tab === "History" && (
@@ -1253,6 +1773,16 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
             <span>{d.createdOn} · by {d.createdBy}</span>
           </div>
         </section>
+      )}
+
+      {openTask && (
+        <TaskDialog
+          task={openTask}
+          worker={worker}
+          onClose={() => setOpenTaskId(null)}
+          onStatus={(status) => patchTask(openTask.id, (t) => ({ ...t, status }))}
+          onComment={(text) => patchTask(openTask.id, (t) => ({ ...t, comments: [...t.comments, { author: CURRENT_USER, text }] }))}
+        />
       )}
 
       {checkInOpen && (
@@ -1270,6 +1800,21 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
             );
             setCheckInOpen(false);
             setTermNote(`${worker.name} checked in at ${facility} on ${isoToDisp(date)}.`);
+          }}
+        />
+      )}
+
+      {transferFacOpen && (
+        <TransferFacilityDialog
+          worker={worker}
+          onClose={() => setTransferFacOpen(false)}
+          onConfirm={(facility, dateIso) => {
+            onSave(
+              { name: worker.name, coordinator: worker.coordinator, accommodation: facility },
+              { accommodationStart: isoToDisp(dateIso) },
+            );
+            setTransferFacOpen(false);
+            setTermNote(`${worker.name} (${worker.id}) transferred from ${worker.accommodation} to ${facility} on ${isoToDisp(dateIso)}.`);
           }}
         />
       )}
@@ -1327,6 +1872,8 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
                 coordinator: PROJECT_COORD[project] ?? worker.coordinator,
                 project,
                 status: "Assigned to a project",
+                ended: false,
+                pendingSince: undefined,
               },
               { role, assignStart: isoToDisp(startIso), pendingSince: undefined },
             );
@@ -1336,11 +1883,21 @@ function WorkerDetail({ worker, extra, onBack, onSave }: {
         />
       )}
 
+      {labourOpen && (
+        <LabourOfficeDialog
+          worker={worker}
+          onClose={() => setLabourOpen(false)}
+          onSave={saveLabourOffice}
+        />
+      )}
+
       {termOpen && (
         <TerminationDialog
           worker={worker}
           onClose={() => setTermOpen(false)}
           onConfirm={(date, reason) => {
+            // flag the worker so the list shows "Awaiting termination documentation"
+            onSave({ name: worker.name, coordinator: worker.coordinator, terminating: true, pendingSince: isoToDisp(AS_OF), termEffective: isoToDisp(date) }, {});
             setTermOpen(false);
             setTermNote(`Termination started for ${worker.name} (${worker.id}) — effective ${date}, reason: ${reason}. Status changes to Terminated once the SP deregistration document is verified.`);
           }}
@@ -1366,12 +1923,15 @@ export default function WorkersPage(): React.JSX.Element {
   const [addOpen, setAddOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [viewKey, setViewKey] = useState("all"); // the "View:" dropdown
   const [page, setPage] = useState(1);
   const [compact, setCompact] = useState(false);
   // Opens straight on the worker named in ?worker= (so Documents / Projects -> worker profile works)
   const [openId, setOpenId] = useState<string | null>(
     () => INITIAL_WORKERS.find((w) => w.id === urlWorker || w.name === urlWorker)?.id ?? null,
   );
+  // true when the profile was opened with "Begin termination" from the Coordinator reports tab
+  const [termOnOpen, setTermOnOpen] = useState(false);
 
   // if ?worker= changes while the page is already open, follow it
   useEffect(() => {
@@ -1395,6 +1955,16 @@ export default function WorkersPage(): React.JSX.Element {
     setExtras((e) => ({ ...e, [id]: { ...e[id], ...extra } }));
   };
 
+  const openProfile = (id: string) => { setTermOnOpen(false); setOpenId(id); };
+  const beginTermination = (id: string) => { setTermOnOpen(true); setOpenId(id); };
+
+  // Acknowledge an "Expected departure" report: it leaves the Coordinator reports tab and changes nothing else.
+  const acknowledgeReport = (id: string) => {
+    const w = workers.find((x) => x.id === id);
+    setWorkers((list) => list.map((x) => (x.id === id ? { ...x, coordinatorReport: false, report: undefined } : x)));
+    if (w) setNotice(`Report about ${w.name} (${w.id}) acknowledged.`);
+  };
+
   const tab = TABS.find((t) => t.key === tabKey)!;
   const count = (key: string) => workers.filter(TABS.find((t) => t.key === key)!.match).length;
 
@@ -1411,16 +1981,29 @@ export default function WorkersPage(): React.JSX.Element {
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
+    const view = VIEWS.find((v) => v.key === viewKey) ?? VIEWS[0];
     return workers
       .filter(tab.match)
+      .filter(view.match)
       .filter((w) => !q || w.name.toLowerCase().includes(q) || w.id.toLowerCase().includes(q))
       .filter((w) => matchesFilters(w, filters, nationalityOf));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, query, workers, filters, extras]);
+  }, [tab, viewKey, query, workers, filters, extras]);
 
-  useEffect(() => setPage(1), [tabKey, query, filters]);
+  useEffect(() => setPage(1), [tabKey, viewKey, query, filters]);
 
   const showPending = tabKey === "pending";
+
+  // Dated fields the list shows (same values as the worker profile, including edits)
+  const infoOf = (w: Worker) => {
+    const d = { ...detailFor(w), ...(extras[w.id] ?? {}) };
+    return {
+      assignStart: d.assignStart,
+      arrival: d.arrival,
+      workStart: d.workStart,
+      stayStart: d.accommodationStart ?? "—",
+    };
+  };
 
   const openWorker = openId ? workers.find((w) => w.id === openId) : undefined;
   if (openWorker) {
@@ -1430,8 +2013,10 @@ export default function WorkersPage(): React.JSX.Element {
         <WorkerDetail
           worker={openWorker}
           extra={extras[openWorker.id]}
+          startWithTermination={termOnOpen}
           onBack={() => {
             setOpenId(null);
+            setTermOnOpen(false);
             // clear ?worker= so the Workers breadcrumb returns to the normal list
             if (urlWorker) {
               const next = new URLSearchParams(searchParams);
@@ -1511,9 +2096,8 @@ export default function WorkersPage(): React.JSX.Element {
       <section className="sm-card wk-panel">
         <div className="wk-toolbar">
           <label className="wk-select">
-            <select defaultValue="all" aria-label="View">
-              <option value="all">View: All workers</option>
-              <option value="mine">View: My workers</option>
+            <select value={viewKey} onChange={(e) => setViewKey(e.target.value)} aria-label="View">
+              {VIEWS.map((v) => <option key={v.key} value={v.key}>{v.label}</option>)}
             </select>
             <ChevronDown size={16} />
           </label>
@@ -1553,13 +2137,23 @@ export default function WorkersPage(): React.JSX.Element {
           </p>
         )}
 
+        {tabKey === "reports" && (
+          <p className="wk-note">
+            Reports sent by coordinators. They are information for Administration and never change a worker's status by themselves.
+          </p>
+        )}
+
         <WorkerTable
           rows={rows}
           page={page}
           onPageChange={setPage}
           compact={compact}
           showPending={showPending}
-          onOpenWorker={setOpenId}
+          tabKey={tabKey}
+          infoOf={infoOf}
+          onOpenWorker={openProfile}
+          onBeginTermination={beginTermination}
+          onAcknowledge={acknowledgeReport}
         />
       </section>
 
@@ -1631,16 +2225,16 @@ html[data-theme="dark"] .sm-pill.info{background:#1f3350;color:#9db8ff}
 .wd-sum{display:grid;grid-template-columns:1.55fr 1fr 1.1fr 1fr 1.2fr 1fr 1fr;padding:0;margin-bottom:10px;overflow:hidden}
 .wd-sum>div{padding:10px 12px 11px;border-left:1px solid var(--line);min-width:0}
 .wd-sum>div:first-child{border-left:0}
-.wd-k{font-size:12px;color:var(--muted);line-height:1.3}
+.wd-k{font-size:13px;color:var(--muted);line-height:1.3}
 .wd-v{margin-top:5px;font-size:12.5px}
-.wd-strong{font-size:13.5px;font-weight:600;line-height:1.3;color:var(--text)}
+.wd-strong{font-size:14px;font-weight:600;line-height:1.3;color:var(--text)}
 .wd-pill::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor;margin-right:6px;vertical-align:middle}
-.wd-pill{font-size:12px;padding:2px 9px}
+.wd-pill{font-size:13px;font-weight:600;padding:2px 9px}
 
 .wd-life{padding:10px 16px 12px;margin-bottom:10px}
-.wd-life-title{font-size:13px;color:var(--muted);margin-bottom:8px}
+.wd-life-title{font-size:14px;color:var(--muted);margin-bottom:8px}
 .wd-steps{display:flex}
-.wd-step{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 20px 0 26px;margin-left:-6px;font-size:13px;font-weight:500;white-space:nowrap;background:var(--hover);color:var(--muted);clip-path:polygon(0 0,calc(100% - 12px) 0,100% 50%,calc(100% - 12px) 100%,0 100%,12px 50%)}
+.wd-step{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 20px 0 26px;margin-left:-6px;font-size:14px;font-weight:500;white-space:nowrap;background:var(--hover);color:var(--muted);clip-path:polygon(0 0,calc(100% - 12px) 0,100% 50%,calc(100% - 12px) 100%,0 100%,12px 50%)}
 .wd-step:first-child{margin-left:0;padding-left:14px;clip-path:polygon(0 0,calc(100% - 12px) 0,100% 50%,calc(100% - 12px) 100%,0 100%)}
 .wd-step.is-done{background:var(--green-soft);color:var(--green)}
 .wd-step.is-current{background:var(--green);color:var(--on-green);font-weight:600}
@@ -1648,20 +2242,20 @@ html[data-theme="dark"] .sm-pill.info{background:#1f3350;color:#9db8ff}
 
 .wd-tabs{display:flex;gap:4px;overflow-x:auto;border-bottom:1px solid var(--line);margin-bottom:10px;scrollbar-width:none}
 .wd-tabs::-webkit-scrollbar{display:none}
-.wd-tabs button{flex:none;padding:7px 13px 8px;font-size:13.5px;color:var(--muted);white-space:nowrap;border-bottom:2px solid transparent;margin-bottom:-1px}
+.wd-tabs button{flex:none;padding:7px 13px 8px;font-size:14px;color:var(--muted);white-space:nowrap;border-bottom:2px solid transparent;margin-bottom:-1px}
 .wd-tabs button.is-active{color:var(--green);font-weight:600;border-bottom-color:var(--green)}
 
 .wd-panel{padding:14px 18px 16px;margin-bottom:12px}
 .wd-panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
 .wd-panel-head h3,.wd-sub{margin:0;font-size:14px;font-weight:600;color:var(--text)}
 .wd-sub{margin:16px 0 6px}
-.wd-kv{display:grid;grid-template-columns:190px 1fr;gap:9px 14px;margin-bottom:14px;font-size:13.5px;line-height:1.35}
+.wd-kv{display:grid;grid-template-columns:190px 1fr;gap:9px 14px;margin-bottom:14px;font-size:14px;line-height:1.35}
 .wd-kv dt{color:var(--muted)}
 .wd-kv dd{margin:0;color:var(--text)}
 .wd-muted{color:var(--muted)}
 .wd-green{color:var(--green);font-weight:500}
 .wd-table{width:100%;font-size:13px}
-.wd-table th{font-size:12px;font-weight:500;color:var(--muted);white-space:nowrap}
+.wd-table th{font-size:13px;font-weight:500;color:var(--muted);white-space:nowrap}
 .wd-table td{white-space:nowrap;padding-top:8px;padding-bottom:8px}
 .wd-btn{margin-top:10px}
 .wd-foot{margin:8px 0 0;font-size:12.5px}
@@ -1701,13 +2295,26 @@ html[data-theme="dark"] .sm-pill.info{background:#1f3350;color:#9db8ff}
 .wd-status-title{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:14px;font-weight:600;color:var(--text)}
 .wd-status .wd-kv{grid-template-columns:190px 1fr;align-items:center}
 .wd-status-note{margin-left:8px;color:var(--muted)}
-.wd-pending{display:flex;align-items:center;gap:10px;margin-top:12px;padding:9px 14px;border-radius:8px;background:var(--warn-bg);color:var(--warn-text);font-size:13px;line-height:1.4}
+.wd-pending{display:flex;align-items:center;gap:10px;margin-top:12px;padding:9px 14px;border-radius:8px;background:var(--warn-bg);color:var(--warn-text);font-size:14px;line-height:1.4}
 .wd-pending svg{flex:none}
 .wd-pending b{font-weight:600}
+.wd-pending.is-danger{background:var(--danger-bg);color:var(--danger)}
+
+/* Termination card (inside the status card) */
+.wd-term{margin-top:12px;padding:14px 18px 16px;border:1px solid var(--line);border-radius:10px;background: #f8f9f7;}
+.wd-term h4{margin:0 0 10px;font-size:15px;font-weight:600;color:var(--text)}
+.wd-term .wd-kv{margin-bottom:12px;align-items:center}
+.wd-term .sm-btn{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 14px;font-size:14px;font-weight:600;border-radius:8px}
+.wd-dereg-file{margin-left:8px;color:var(--text)}
+.wd-labour-btn{margin-top:4px;transition:background-color .2s ease,border-color .2s ease,color .2s ease,transform .2s ease}
+.wd-labour-btn:hover{background:var(--green-soft);border-color:var(--green);color:var(--green);transform:translateY(-1px)}
+.wd-labour-btn:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+.wd-toast{position:fixed;left:50%;bottom:72px;transform:translateX(-50%);z-index:1100;display:flex;align-items:center;gap:28px;padding:14px 24px;border-radius:12px;background:#2b312d;color:#fff;font-size:15px;box-shadow:0 8px 28px rgba(0,0,0,.25)}
+.wd-toast button{padding:0;background:none;color:#9be3b0;font-size:15px;font-weight:600;cursor:pointer}
 
 /* ---- Begin termination / Edit profile dialogs ---- */
 .tm-overlay{position:fixed;inset:0;z-index:200;display:grid;place-items:center;padding:20px;background:var(--overlay);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
-.tm-dialog{width:100%;max-width:520px;padding:16px 20px 18px;border-radius:14px;background:var(--card);color:var(--text);border:1px solid var(--line);box-shadow:var(--shadow);max-height:calc(100vh - 56px);overflow-y:auto}
+.tm-dialog{width:100%;max-width:620px;padding:18px 22px 18px;border-radius:14px;background:var(--card);color:var(--text);border:1px solid var(--line);box-shadow:var(--shadow);max-height:calc(100vh - 56px);overflow-y:auto}
 .tm-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
 .tm-head h2{margin:0;font-size:16px;font-weight:600;color:var(--text)}
 .tm-close{display:grid;place-items:center;width:26px;height:26px;border-radius:8px;color:var(--muted);cursor:pointer}
@@ -1723,7 +2330,7 @@ html[data-theme="dark"] .sm-pill.info{background:#1f3350;color:#9db8ff}
 .tm-select svg{position:absolute;right:9px;top:8px;width:15px;height:15px;pointer-events:none;color:var(--muted)}
 .tm-note{margin:0 0 12px;font-size:12px;line-height:1.5;color:var(--muted)}
 .tm-note strong{color:var(--text);font-weight:600}
-.tm-submit{height:32px;padding:0 14px;font-size:14px;font-weight:500;border-radius:8px}
+.tm-submit{height:32px;padding:0 14px;font-size:14px;font-weight:500;border-radius:8px;border:none}
 .tm-submit:disabled{opacity:.5;cursor:default}
 @media (max-width:640px){
   .tm-grid{grid-template-columns:1fr}
@@ -1751,6 +2358,7 @@ html[data-theme="dark"] .sm-pill.info{background:#1f3350;color:#9db8ff}
 .ci-modal{width:680px;max-width:100%;max-height:calc(100vh - 40px);overflow-y:auto;padding:30px;background:#fff;color:#202820;border-radius:19px;box-shadow:0 20px 60px rgba(0,0,0,.18)}
 .ci-header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:24px}
 .ci-header h2{margin:0;font-size:16px;line-height:1.3;font-weight:600;color:#202820}
+.ci-transfer .ci-header h2{font-size:18px}
 .ci-close{display:grid;place-items:center;width:28px;height:28px;padding:0;border:0;border-radius:8px;background:transparent;color:#68736c;cursor:pointer}
 .ci-close:hover{background:#f2f2f2;color:#202820}
 .ci-field{display:flex;flex-direction:column;gap:8px;min-width:0;color:#626c65;font-size:13px;font-weight:500}
@@ -1770,6 +2378,83 @@ html[data-theme="dark"] .sm-pill.info{background:#1f3350;color:#9db8ff}
 .ci-modal::-webkit-scrollbar-thumb{background:#d5dcd5;border-radius:999px;border:2px solid transparent;background-clip:padding-box}
 @media(max-width:650px){.ci-modal{padding:22px}.ci-header{margin-bottom:22px}.ci-date{width:100%}}
 
+/* ---- Tasks & Notes tab + task details modal ---- */
+.wd-tasks{padding:4px;margin-bottom:12px}
+.wd-task{display:flex;align-items:center;justify-content:space-between;gap:16px;width:100%;padding:10px 14px;margin:10px 1px;border-radius:10px;text-align:left;cursor:pointer;background:transparent;color:var(--text);transition:background-color .15s ease}
+.wd-task:hover,.wd-task:focus-visible{background:var(--hover-soft);outline:none}
+.wd-task-main{display:flex;flex-direction:column;gap:6px;min-width:0}
+.wd-task-main strong{font-size:14px;font-weight:600;line-height:1.3}
+.wd-task-main span{font-size:13px;color:var(--muted);line-height:1.3}
+
+.tk-overlay{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(30,38,32,.38);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.tk-modal{width:700px;max-width:100%;max-height:calc(100vh - 40px);overflow-y:auto;padding:30px 32px 32px;background:var(--card);color:var(--text);border-radius:19px;box-shadow:0 20px 60px rgba(0,0,0,.18)}
+.tk-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:22px}
+.tk-head h2{margin:0;font-size:18px;line-height:1.3;font-weight:600;color:var(--text)}
+.tk-close{display:grid;place-items:center;width:30px;height:30px;padding:0;border:0;border-radius:8px;background:transparent;color:var(--muted);cursor:pointer}
+.tk-close:hover{background:var(--hover);color:var(--text)}
+.tk-kv{display:grid;grid-template-columns:220px 1fr;gap:10px 16px;margin:0 0 20px;font-size:13px;line-height:1.45}
+.tk-kv dt{color:var(--muted)}
+.tk-kv dd{margin:0;color:var(--text)}
+.tk-label{display:block;margin-bottom:6px;font-size:13px;color:var(--muted)}
+.tk-select{position:relative;display:block}
+.tk-select select{appearance:none;width:100%;height:38px;padding:0 40px 0 16px;border:1px solid var(--line);border-radius:10px;background:var(--card);font:inherit;font-size:13px;color:var(--text);cursor:pointer}
+.tk-select select:focus{outline:2px solid var(--green);outline-offset:-1px}
+.tk-select svg{position:absolute;right:14px;top:12px;color:var(--text);pointer-events:none}
+.tk-sub{margin:18px 0 4px;font-size:13px;font-weight:600;color:var(--text)}
+.tk-muted{margin:0 0 14px;font-size:13px;color:var(--muted)}
+.tk-comments{list-style:none;margin:0 0 14px;padding:0;display:flex;flex-direction:column;gap:10px;font-size:14px}
+.tk-comments li{display:flex;flex-direction:column;gap:2px}
+.tk-comments strong{font-weight:600}
+.tk-comments span{color:var(--text)}
+.tk-compose {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    height: 40px;
+    padding: 0 6px 0 20px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface-2);
+    transition: border-color .2s ease, box-shadow .2s ease;
+}
+
+
+
+.tk-compose input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    outline: none;
+    background: transparent;
+    font: inherit;
+    font-size: 14.5px;
+    color: var(--text);
+}
+
+.tk-compose button {
+    height: 34px;
+    padding: 0 15px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--green);
+    font-size: 14.5px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.tk-compose button:hover {
+    background: var(--green-soft);
+    color: var(--green);
+}
+
+.tk-compose button:focus-visible {
+    background: var(--green-soft);
+    outline-offset: 2px;
+}
+
+@media(max-width:650px){.tk-modal{padding:22px}.tk-kv{grid-template-columns:1fr;gap:2px 0}.tk-kv dd{margin-bottom:10px}}
+
 /* ---- Update SP Record modal ---- */
 .sp-modal-overlay{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(30,38,32,.38);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
 .sp-modal{width:680px;max-width:100%;max-height:calc(100vh - 40px);overflow-y:auto;padding:30px;background:#fff;color:#202820;border-radius:19px;box-shadow:0 20px 60px rgba(0,0,0,.18)}
@@ -1779,8 +2464,8 @@ html[data-theme="dark"] .sm-pill.info{background:#1f3350;color:#9db8ff}
 .tm-close:hover{background: #f2f2f2;color:var(--text)}
 .tm-close:focus,.tm-close:focus-visible,.tm-close:active{background:transparent;box-shadow:none;outline:none}
 .sp-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px 16px}
-.sp-field{display:flex;flex-direction:column;gap:8px;min-width:0;color:#626c65;font-size:13px;font-weight:500}
-.sp-field input{width:100%;min-height:42px;box-sizing:border-box;border:1px solid #d5dcd5;border-radius:10px;padding:9px 13px;background:#fff;color:#252b26;font:inherit;font-size:13px;outline:none}
+.sp-field{display:flex;flex-direction:column;gap:8px;min-width:0;color:#626c65;font-size:12px;font-weight:500}
+.sp-field input{width:100%;min-height:38px;box-sizing:border-box;border:1px solid #d5dcd5;border-radius:10px;padding:9px 13px;background:#fff;color:#252b26;font:inherit;font-size:13px;outline:none}
 .sp-field input:focus{border-color:#278348;box-shadow:0 0 0 2px rgba(39,131,72,.1)}
 .sp-evidence{margin-top:18px}
 .sp-evidence input[type=file]{padding:6px 12px}
@@ -1789,7 +2474,7 @@ html[data-theme="dark"] .sm-pill.info{background:#1f3350;color:#9db8ff}
 .sp-verify input{width:18px;height:18px;margin:1px 0 0;accent-color:#167538;flex:none}
 .sp-help-text{margin:12px 0 17px;color:#68736c;font-size:12px;line-height:1.55}
 .sp-modal-footer{display:flex;justify-content:flex-start}
-.sp-save-btn{min-height:40px;padding:0 16px;border:0;border-radius:10px;background:#167538;color:#fff;font-size:14px;font-weight:600;cursor:pointer;transition:background-color .2s ease}
+.sp-save-btn{min-height:36px;padding:0 16px;border:0;border-radius:10px;background:#167538;color:#fff;font-size:13px;font-weight:600;cursor:pointer;transition:background-color .2s ease}
 .sp-save-btn:hover{background:#125f2d}
 .sp-modal::-webkit-scrollbar{width:10px}
 .sp-modal::-webkit-scrollbar-track{background:transparent;margin:14px 0}
