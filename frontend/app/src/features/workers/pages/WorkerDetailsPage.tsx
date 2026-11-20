@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   ChevronDown, ChevronRight, Download, Search, SlidersHorizontal, AlignJustify, Menu, X,
-  Check, Plus, LogIn, LogOut, ArrowRightLeft, FileText, CloudUpload, Ban, BadgeCheck,
+  Check, Plus, LogIn, LogOut, ArrowRightLeft, FileText, CloudUpload, Ban, BadgeCheck, XCircle, UserSearch,
 } from "lucide-react";
 import AddWorkerPage from "./AddWorkerPage"; // <- adjust the path to where your Add Worker dialog lives
 import WorkerTable, { STATUS_PILL, AS_OF } from "../components/WorkerTable";
@@ -31,6 +31,8 @@ export interface ReportInfo {
   details: string;
   /** "Expected departure" reports get Begin termination / Acknowledge instead of Open. */
   departure?: boolean;
+  /** Set when Begin termination was started from this report: the list shows "Acknowledged" instead of buttons. */
+  acknowledged?: boolean;
 }
 
 export interface Worker {
@@ -141,10 +143,12 @@ const NAMED: Worker[] = [
   available("SM-1042", "Ivan Petrenko", JANA, { project: "AutoParts Slovakia", blocked: true, sp: "No evidence", accommodation: "Villa Rezidencia Trnava", pendingSince: "05 Sep 2026" }),
   available("SM-1150", "Nikola Ionescu", JANA, { project: "CNC Machining Hall", blocked: true, sp: "Uploaded, awaiting verification", docsPending: 1, pendingSince: "03 Sep 2026" }),
   available("SM-0947", "Petar Marković", JANA, { ended: true, pendingSince: "21 Aug 2026" }),
-  available("SM-0958", "Taras Georgiev", JANA, {
-    ended: true, pendingSince: "04 Sep 2026",
+  assigned("SM-1119", "Taras Georgiev", "Line 3 Assembly", {
     coordinatorReport: true,
-    report: { kind: "Expected departure", from: PETER, date: "30 Sep 2026", details: "Contract with factory ends; proposed by coordinator", departure: true },
+    report: {
+      kind: "Expected departure", from: PETER, date: "30 Sep 2026",
+      details: "Contract with factory ends; proposed by coordinator", departure: true, acknowledged: true,
+    },
   }),
   available("SM-1153", "Viorel Koval", JANA, { terminating: true, pendingSince: "04 Sep 2026", termEffective: "04 Sep 2026" }),
   { id: "SM-1158", name: "Dragan Savchenko", status: "In preparation", project: null, coordinator: JANA, accommodation: null, sp: "No evidence", docsMissing: 0, pendingSince: "01 Sep 2026" },
@@ -161,6 +165,9 @@ const NAMED: Worker[] = [
 const FIRST = ["Adrian", "Bogdan", "Cătălin", "Daniel", "Emil", "Filip", "Gabriel", "Hanna", "Igor", "Jakub", "Kamil", "Lukáš", "Marian", "Nadiia", "Ondrej", "Pavlo", "Radovan", "Sergiy", "Tibor", "Viktor", "Yuriy", "Zoltán"];
 const LAST = ["Horváth", "Kováč", "Novák", "Szabó", "Popov", "Marin", "Bondarenko", "Kovalchuk", "Tkachenko", "Stoica", "Dragomir", "Varga", "Baláž", "Ilić", "Petrov"];
 
+// Generated sample workers that should not appear in the list
+const REMOVED_WORKERS = new Set(["Igor Petrov", "Adrian Szabó"]);
+
 function buildWorkers(): Worker[] {
   const used = new Set(NAMED.map((w) => w.name));
   const list = [...NAMED];
@@ -174,7 +181,9 @@ function buildWorkers(): Worker[] {
     list.push(assigned(`SM-${1170 + n}`, name, project));
     n++;
   }
-  return list.sort((a, b) => a.name.localeCompare(b.name));
+  return list
+    .filter((w) => !REMOVED_WORKERS.has(w.name))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 const INITIAL_WORKERS = buildWorkers();
 
@@ -263,6 +272,8 @@ interface WorkerDetailInfo {
   accommodationStart?: string;
   /** Confirmation file of the Labour Office record (set by the "Record Labour Office notification" dialog). */
   labourFile?: string;
+  /** Who verified the SP deregistration document (defaults to the current user, Marek Máhr). */
+  termVerifiedBy?: string;
   /** Set when an assignment was ended: the day the worker became Available again ("09 Sep 2026"). */
   pendingSince?: string;
   docs: DocItem[];
@@ -277,6 +288,13 @@ const DOC_TEMPLATE: Omit<DocItem, "verified">[] = [
   { category: "SP Registration Evidence", expiry: "No expiry", files: ["sp_confirmation.pdf"] },
 ];
 
+// Available workers whose profile shows the "Begin termination" button
+// (every worker that is "Assigned to a project" gets it automatically)
+const CAN_BEGIN_TERMINATION = new Set(["SM-1149", "SM-0754", "SM-0876", "SM-1150", "SM-1042"]);
+
+// Workers whose deregistration document is already uploaded (waiting for verification)
+const DEREG_UPLOADED = new Set(["SM-1154"]);
+
 // Records that exist in the prototype data; every other worker falls back to "—" for the unknown fields.
 const DETAIL_OVERRIDES: Record<string, Partial<WorkerDetailInfo>> = {
   "SM-0432": {
@@ -285,18 +303,38 @@ const DETAIL_OVERRIDES: Record<string, Partial<WorkerDetailInfo>> = {
     verifiedBy: "Marek Máhr, 02 Jun 2021", createdOn: "15 May 2021", createdBy: "Jana Kollárová", assignStart: "05 Jun 2021",
   },
   "SM-0754": { role: "Forklift Operator", nationality: "Ukraine", country: "Ukraine", empStart: "20 Apr 2025" },
+  // Terminated, with the Labour Office notification already recorded
+  "SM-0119": {
+    role: "—", nationality: "Ukraine", country: "Ukraine", empStart: "09 Jan 2023",
+    spFile: "sp_deregistration.pdf", labourFile: "labour_office_notice.pdf",
+  },
+  "SM-1154": {
+    dob: "18 Feb 1990", nationality: "Ukraine", role: "Machine Operator", telephone: "+421 900 281 180",
+    country: "Ukraine", empStart: "03 Mar 2025",
+  },
+  "SM-1119": {
+    dob: "11 Jun 1994", nationality: "Ukraine", role: "Production Operator", telephone: "+421 900 359 356",
+    country: "Ukraine", empStart: "24 Jun 2024", assignStart: "24 Jun 2024",
+  },
   "SM-1153": {
     dob: "14 Sep 2000", nationality: "Vietnam", role: "Assembler", telephone: "+421 900 305 552",
     country: "Vietnam", empStart: "01 Oct 2024",
   },
   // Accommodated workers: stay start dates shown on the Accommodated tab (and the worker's Accommodation tab)
-  "SM-0876": { accommodationStart: "15 Mar 2025" },
+  "SM-0876": {
+    dob: "05 May 1993", nationality: "Romania", role: "Quality Control Inspector", telephone: "+421 900 111 004",
+    country: "Romania", empStart: "12 Aug 2024", accommodationStart: "15 Mar 2025",
+  },
   "SM-1042": {
     dob: "14 Mar 1991", nationality: "Ukraine", role: "Production Operator", telephone: "+421 900 111 001",
     country: "Ukraine", empStart: "03 Feb 2025", accommodationStart: "03 Feb 2025",
   },
   "SM-0981": { empStart: "05 Mar 2022", assignStart: "05 Mar 2022", accommodationStart: "15 Jan 2025" },
-  "SM-1156": { accommodationStart: "15 Feb 2024" },
+  "SM-1149": { role: "Packer", nationality: "Moldova", country: "Moldova", empStart: "07 Sep 2026" },
+  "SM-1156": {
+    dob: "13 Jun 1990", empStart: "12 Feb 2024", accommodationStart: "15 Feb 2024",
+    termVerifiedBy: "Zuzana Horváthová", spFile: "sp_deregistration.pdf", labourFile: "labour_office_notice.pdf",
+  },
   // Did not start
   "SM-1159": { workStart: "20 Aug 2026" },
   // AutoParts Slovakia roster (matches Projects → project detail → Workers)
@@ -325,8 +363,14 @@ const DETAIL_OVERRIDES: Record<string, Partial<WorkerDetailInfo>> = {
   "SM-1144": { empStart: "17 Aug 2026", assignStart: "17 Aug 2026" },
   // Planned dates shown on the list (In preparation tab)
   "SM-1158": { arrival: "30 Aug 2026", workStart: "01 Sep 2026" },
-  "SM-1157": { arrival: "20 Sep 2026", workStart: "24 Sep 2026" },
-  "SM-1103": { arrival: "11 Sep 2026", workStart: "15 Sep 2026" },
+  "SM-1157": {
+    role: "Machine Operator", nationality: "Bulgaria", country: "Bulgaria",
+    arrival: "20 Aug 2026", workStart: "24 Aug 2026", // planned start already passed -> "Did not start" button
+  },
+  "SM-1103": {
+    dob: "19 Nov 1995", nationality: "Vietnam", role: "Assembly Line Worker", country: "Vietnam",
+    arrival: "11 Sep 2026", workStart: "15 Sep 2026",
+  },
 };
 
 const ROLES = ["Warehouse Associate", "Forklift Operator", "CNC Operator", "Line Assembler", "Packer", "Quality Inspector"];
@@ -357,16 +401,21 @@ const detailFor = (w: Worker): WorkerDetailInfo => {
 /* ---------- Pending action (status card on the detail page) ---------- */
 const daysSince = (iso: string) => Math.round((Date.parse(AS_OF) - Date.parse(iso)) / 86400000);
 
-const pendingLabel = (w: Worker): string =>
-  w.terminating ? "Awaiting termination documentation" : w.status === "Did not start" ? "Did-not-start check" : w.status;
+/** `dnsCheck` = the worker is In preparation but the planned start date has already passed. */
+const pendingLabel = (w: Worker, dnsCheck = false): string =>
+  w.terminating ? "Awaiting termination documentation"
+  : dnsCheck || w.status === "Did not start" ? "Did-not-start check"
+  : w.status;
+
 /** `ended` = the worker's assignment was just ended, so the next step is to reassign or terminate. */
-const pendingHint = (w: Worker, ended = false): string | null =>
+const pendingHint = (w: Worker, ended = false, dnsCheck = false): string | null =>
   w.terminating ? "Upload and verify the Social Insurance deregistration document."
+  : dnsCheck ? "Record the closure outcome."
   : w.status === "Available"
     ? (ended
         ? "Reassign to a project, or begin termination."
         : w.sp !== "Registered" ? "Verify Social Insurance evidence to activate the assignment." : "Assign the worker to a project.")
-    : w.status === "In preparation" ? "Complete the preparation checklist and required documents."
+    : w.status === "In preparation" ? "Complete onboarding and documents."
     : w.status === "Did not start" ? "Complete the did-not-start check."
     : null;
 
@@ -399,7 +448,8 @@ function TerminationDialog({ worker, onClose, onConfirm }: {
   onClose: () => void;
   onConfirm: (date: string, reason: string) => void;
 }): React.JSX.Element {
-  const [date, setDate] = useState(todayIso());
+  // an "Expected departure" report proposes its date as the effective termination date
+  const [date, setDate] = useState(() => (worker.report?.departure && dispToIso(worker.report.date)) || todayIso());
   const [reason, setReason] = useState(TERMINATION_REASONS[0]);
 
   // Esc closes the dialog
@@ -450,6 +500,7 @@ function TerminationDialog({ worker, onClose, onConfirm }: {
 
 /* ---------- Edit profile dialog ---------- */
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const FULL_MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const COORDINATORS = [JANA, PETER];
 
 // "11 Sep 1987" -> "1987-09-11" (for the date input); anything else -> ""
@@ -480,6 +531,9 @@ interface ProfilePatch {
   termEffective?: string;
   termConfirmed?: string;
   labourOffice?: string;
+  closedOn?: string;
+  expectedStart?: string;
+  report?: ReportInfo;
 }
 
 function EditProfileDialog({ worker, d, onClose, onSave }: {
@@ -1200,6 +1254,13 @@ function WorkerDetail({ worker, extra, startWithTermination = false, onBack, onS
   onSave: (patch: ProfilePatch, extra: Partial<WorkerDetailInfo>) => void;
 }): React.JSX.Element {
   const d = useMemo(() => ({ ...detailFor(worker), ...(extra ?? {}) }), [worker, extra]);
+
+  // In preparation, but the planned work start date has already passed → "Did-not-start check"
+  const dnsCheck = worker.status === "In preparation" && (() => {
+    const iso = dispToIso(d.workStart);
+    return !!iso && iso < AS_OF;
+  })();
+
   const [tab, setTab] = useState<DetailTab>("Personal");
   const [docs, setDocs] = useState<DocItem[]>(d.docs);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -1212,7 +1273,10 @@ function WorkerDetail({ worker, extra, startWithTermination = false, onBack, onS
   const [checkInOpen, setCheckInOpen] = useState(false);
   const [transferFacOpen, setTransferFacOpen] = useState(false); // "Transfer Facility" dialog
   const [labourOpen, setLabourOpen] = useState(false); // "Record Labour Office notification" dialog
-  const [deregFile, setDeregFile] = useState<string | null>(null); // set once the deregistration document is uploaded
+  // set once the deregistration document is uploaded (SM-1154 starts with it already uploaded)
+  const [deregFile, setDeregFile] = useState<string | null>(
+    () => (worker.terminating && DEREG_UPLOADED.has(worker.id) ? "sp_deregistration.pdf" : null),
+  );
   const [tasks, setTasks] = useState<WorkerTask[]>(() => TASKS_BY_WORKER[worker.id] ?? []);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const openTask = tasks.find((t) => t.id === openTaskId);
@@ -1247,6 +1311,24 @@ function WorkerDetail({ worker, extra, startWithTermination = false, onBack, onS
     setDeregFile(null);
     setTermNote(`Termination completed for ${worker.name} (${worker.id}). The deregistration document was verified and the status is now Terminated.`);
     setLabourOpen(true);
+  };
+
+  // Close the case: the worker never started (the "Did not start" button shown while the Did-not-start check is pending)
+  const markDidNotStart = () => {
+    onSave(
+      {
+        name: worker.name,
+        coordinator: worker.coordinator,
+        status: "Did not start",
+        project: null,
+        ended: false,
+        pendingSince: undefined,
+        closedOn: isoToDisp(AS_OF),
+        expectedStart: d.workStart,
+      },
+      { pendingSince: undefined },
+    );
+    setTermNote(`${worker.name} (${worker.id}) marked as Did not start.`);
   };
 
   // Check Out ends the stay straight away (no dialog): the worker becomes "not accommodated",
@@ -1284,7 +1366,7 @@ function WorkerDetail({ worker, extra, startWithTermination = false, onBack, onS
 
   const stage = STAGE_OF[worker.status];
   const initials = worker.name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
-  const subtitle = [d.role, d.nationality].filter((v) => v && v !== "—").join(" · ");
+  const subtitle = [d.role, d.nationality].filter((v) => !!v).join(" · ");
   const verifiedCount = docs.filter((x) => x.files.length > 0 && x.verified).length;
 
   // Dropped / picked files fill the first categories that are still missing (pending verification).
@@ -1320,12 +1402,22 @@ function WorkerDetail({ worker, extra, startWithTermination = false, onBack, onS
 
   // The worker just came off a project (set by End Assignment)
   const ended = !!(d.pendingSince || worker.ended);
-  const hint = pendingHint(worker, ended);
+  const hint = pendingHint(worker, ended, dnsCheck);
   const sinceLabel = d.pendingSince ?? worker.pendingSince ?? d.empStart;
   const sinceIso = dispToIso(sinceLabel);
   const pendingDays = sinceIso ? daysSince(sinceIso) : null;
   const sinceText =
     pendingDays === null ? "" : pendingDays <= 0 ? ` Since ${sinceLabel}.` : ` Since ${sinceLabel} · ${pendingDays} days.`;
+
+  // Terminated workers confirmed after the end of the effective month: the leaver figures of that month were revised
+  const statsNote = (() => {
+    if (worker.status !== "Terminated") return null;
+    const eff = dispToIso(worker.termEffective ?? "");
+    const conf = dispToIso(worker.termConfirmed ?? "");
+    if (!eff || !conf || conf.slice(0, 7) <= eff.slice(0, 7)) return null;
+    const monthName = FULL_MONTHS[+eff.slice(5, 7) - 1];
+    return `Confirmed after the month ended — ${monthName} ${eff.slice(0, 4)} leaver figures were revised on ${worker.termConfirmed}.`;
+  })();
 
   return (
     <div className="wk-enter">
@@ -1344,6 +1436,13 @@ function WorkerDetail({ worker, extra, startWithTermination = false, onBack, onS
         </div>
       )}
 
+      {!worker.blocked && worker.status === "In preparation" && worker.intended && worker.project && worker.sp !== "Registered" && (
+        <div className="wd-blocked" role="alert">
+          <Ban size={16} />
+          <span>Assignment will remain blocked on activation — SP registration is not verified for the planned start date at {worker.project}.</span>
+        </div>
+      )}
+
       <section className="sm-card wd-head">
         <div className="wd-avatar">{initials}</div>
         <div className="wd-who">
@@ -1351,18 +1450,24 @@ function WorkerDetail({ worker, extra, startWithTermination = false, onBack, onS
           {subtitle && <p>{subtitle}</p>}
         </div>
         <div className="wd-head-btns">
-          {!worker.terminating && (
-          <button type="button" className="sm-btn sm-btn-outline" onClick={() => setTermOpen(true)}>
-            <img
-              src="/images/termination.svg"
-              alt=""
-              aria-hidden="true"
-              width={16}
-              height={16}
-              style={{ display: "block", flex: "none" }}
-            />{" "}
-            Begin termination
-          </button>
+          {(dnsCheck || worker.status === "In preparation") && (
+            <button type="button" className="sm-btn sm-btn-outline" onClick={markDidNotStart}>
+              <XCircle size={16} /> Did not start
+            </button>
+          )}
+          {!worker.terminating &&
+            (worker.status === "Assigned to a project" || (worker.status === "Available" && CAN_BEGIN_TERMINATION.has(worker.id))) && (
+            <button type="button" className="sm-btn sm-btn-outline" onClick={() => setTermOpen(true)}>
+              <img
+                src="/images/termination.svg"
+                alt=""
+                aria-hidden="true"
+                width={16}
+                height={16}
+                style={{ display: "block", flex: "none" }}
+              />{" "}
+              Begin termination
+            </button>
           )}
           <button type="button" className="sm-btn sm-btn-outline" onClick={() => setEditOpen(true)}>
             <img
@@ -1408,20 +1513,27 @@ function WorkerDetail({ worker, extra, startWithTermination = false, onBack, onS
       <section className="sm-card wd-life">
         <div className="wd-life-title">Worker lifecycle</div>
         <div className="wd-steps">
-          {LIFECYCLE.map((label, i) => {
-            const cls = i < stage ? "is-done" : i === stage ? (label === "Terminated" ? "is-current is-bad" : "is-current") : "";
-            return (
-              <div key={label} className={`wd-step ${cls}`}>
-                {i < stage && <Check size={15} strokeWidth={2} />}
-                {label}
-              </div>
-            );
-          })}
+          {worker.status === "Did not start" ? (
+            <>
+              <div className="wd-step is-done">In preparation</div>
+              <div className="wd-step is-closed">Did not start — profile closed</div>
+            </>
+          ) : (
+            LIFECYCLE.map((label, i) => {
+              const cls = i < stage ? "is-done" : i === stage ? (label === "Terminated" ? "is-current is-bad" : "is-current") : "";
+              return (
+                <div key={label} className={`wd-step ${cls}`}>
+                  {i < stage && <Check size={15} strokeWidth={2} />}
+                  {label}
+                </div>
+              );
+            })
+          )}
         </div>
       </section>
 
       {/* Keep this section visible after termination so the Labour Office step is available. */}
-      {(hint || worker.terminating || worker.status === "Terminated") && (
+      {(hint || worker.terminating || worker.status === "Terminated" || worker.status === "Did not start" || !!worker.report?.departure || !!worker.interest) && (
         <section className="sm-card wd-status">
           <h3 className="wd-status-title">
             <img src="/images/worker_status.svg" alt="" className="wd-status-icon" />
@@ -1434,10 +1546,16 @@ function WorkerDetail({ worker, extra, startWithTermination = false, onBack, onS
                 <span className="wd-status-note">calculated from dated records</span>
               </span>
             )],
-            ["Employment start", d.empStart],
+            ["Employment start", d.empStart === "—" && (worker.status === "In preparation" || worker.status === "Did not start") ? "Not started yet" : d.empStart],
+            ...(worker.status === "Did not start"
+              ? ([
+                  ["Expected start", worker.expectedStart ?? d.workStart],
+                  ["Case closed on", worker.closedOn ?? "—"],
+                ] as [string, React.ReactNode][])
+              : []),
           ])}
 
-          {hint && (
+          {hint && worker.status !== "Did not start" && (
             <div className={`wd-pending${worker.terminating ? " is-danger" : ""}`}>
               <img
                 src="/images/pending_actions.svg"
@@ -1448,9 +1566,41 @@ function WorkerDetail({ worker, extra, startWithTermination = false, onBack, onS
                 style={{ display: "block", flex: "none" }}
               />
               <span>
-                <b>Pending action: {pendingLabel(worker)}</b> — {hint}
+                <b>Pending action: {pendingLabel(worker, dnsCheck)}</b> — {hint}
                 {sinceText}
               </span>
+            </div>
+          )}
+
+          {worker.interest && (
+            <div className="wd-interest">
+              <UserSearch size={16} aria-hidden="true" />
+              <b className="wd-interest-title">Coordinator interest</b>
+              <span className="wd-interest-text">
+                — {worker.interest.coordinator}, {worker.interest.date} · {worker.interest.project} · {worker.interest.reason} · Next: {worker.interest.next}.
+              </span>
+              <em className="wd-interest-note">Separate note; the worker status is unchanged.</em>
+            </div>
+          )}
+
+          {worker.report?.departure && (
+            <div className="wd-departure">
+              <img
+                src="/images/departure_report.svg"
+                alt=""
+                aria-hidden="true"
+                width={18}
+                height={18}
+                style={{ display: "block", flex: "none" }}
+              />
+              <span className="wd-departure-text">
+                <b>Expected departure reported</b> — {worker.report.date} by {worker.report.from} · {worker.report.details} ({worker.report.acknowledged ? "acknowledged" : "pending"})
+              </span>
+              {!worker.terminating && !worker.report.acknowledged && worker.status !== "Terminated" && (
+                <button type="button" className="sm-btn sm-btn-primary" onClick={() => setTermOpen(true)}>
+                  Begin termination
+                </button>
+              )}
             </div>
           )}
 
@@ -1461,7 +1611,7 @@ function WorkerDetail({ worker, extra, startWithTermination = false, onBack, onS
                 ["Effective date", worker.termEffective ?? "—"],
                 ["Deregistration document", worker.status === "Terminated" ? (
                   <span key="verified">
-                    <WPill tone="ok">Verified by Marek Máhr on {worker.termConfirmed ?? isoToDisp(AS_OF)}</WPill>
+                    <WPill tone="ok">Verified by {d.termVerifiedBy ?? "Marek Máhr"} on {worker.termConfirmed ?? isoToDisp(AS_OF)}</WPill>
                     <span className="wd-dereg-file">· {d.spFile && d.spFile !== "—" ? d.spFile : "sp_deregistration.pdf"}</span>
                   </span>
                 ) : deregFile ? (
@@ -1474,13 +1624,16 @@ function WorkerDetail({ worker, extra, startWithTermination = false, onBack, onS
                 )],
                 ["Labour Office record", worker.labourOffice ? (
                   <span key="recorded">
-                    <WPill tone="ok">Recorded on {worker.labourOffice}</WPill>
-                    {d.labourFile && d.labourFile !== "—" && <span className="wd-dereg-file">· {d.labourFile}</span>}
+                    Notified {worker.labourOffice}
+                    {d.labourFile && d.labourFile !== "—" && <> · {d.labourFile}</>}
                   </span>
                 ) : (
                   <span key="not-recorded" className="wd-muted">Not recorded</span>
                 )],
-                ["Accommodation", worker.accommodation ?? "Not accommodated"],
+                ["Accommodation", worker.status === "Terminated" && worker.accommodation ? (
+                  <WPill key="still" tone="bad">Still accommodated at {worker.accommodation} — arrange check-out</WPill>
+                ) : (worker.accommodation ?? "Not accommodated")],
+                ...(statsNote ? ([["Statistics", statsNote]] as [string, React.ReactNode][]) : []),
               ])}
 
               {worker.terminating && (deregFile ? (
@@ -1500,10 +1653,6 @@ function WorkerDetail({ worker, extra, startWithTermination = false, onBack, onS
                   <img src="/images/record_labour.svg" alt="" width={16} height={16} aria-hidden="true" />
                   Record Labour Office notification
                 </button>
-              )}
-
-              {worker.status === "Terminated" && worker.labourOffice && (
-                <WPill tone="ok">Labour Office notification recorded on {worker.labourOffice}</WPill>
               )}
             </div>
           )}
@@ -1897,7 +2046,20 @@ function WorkerDetail({ worker, extra, startWithTermination = false, onBack, onS
           onClose={() => setTermOpen(false)}
           onConfirm={(date, reason) => {
             // flag the worker so the list shows "Awaiting termination documentation"
-            onSave({ name: worker.name, coordinator: worker.coordinator, terminating: true, pendingSince: isoToDisp(AS_OF), termEffective: isoToDisp(date) }, {});
+            // starting termination from an "Expected departure" report marks that report as acknowledged
+            const fromReport = !!worker.report?.departure;
+            onSave(
+              {
+                name: worker.name,
+                coordinator: worker.coordinator,
+                terminating: true,
+                ...(fromReport && worker.status === "Assigned to a project" ? { status: "Available" as WorkerStatus } : {}),
+                pendingSince: fromReport ? isoToDisp(date) : isoToDisp(AS_OF),
+                termEffective: isoToDisp(date),
+                ...(fromReport && worker.report ? { report: { ...worker.report, acknowledged: true } } : {}),
+              },
+              {},
+            );
             setTermOpen(false);
             setTermNote(`Termination started for ${worker.name} (${worker.id}) — effective ${date}, reason: ${reason}. Status changes to Terminated once the SP deregistration document is verified.`);
           }}
@@ -2068,12 +2230,7 @@ export default function WorkersPage(): React.JSX.Element {
         </button>
       </div>
 
-      {notice && (
-        <div className="wk-notice" role="status">
-          <span>{notice}</span>
-          <button type="button" aria-label="Dismiss" onClick={() => setNotice(null)}><X size={16} /></button>
-        </div>
-      )}
+      
 
       <section className="sm-card sm-stat-group" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
         {stats.map((s) => (
@@ -2238,7 +2395,13 @@ html[data-theme="dark"] .sm-pill.info{background:#1f3350;color:#9db8ff}
 .wd-step:first-child{margin-left:0;padding-left:14px;clip-path:polygon(0 0,calc(100% - 12px) 0,100% 50%,calc(100% - 12px) 100%,0 100%)}
 .wd-step.is-done{background:var(--green-soft);color:var(--green)}
 .wd-step.is-current{background:var(--green);color:var(--on-green);font-weight:600}
-.wd-step.is-current.is-bad{background:#b42318;color:#fff}
+.wd-step.is-current.is-bad{background: #ba1a1a;color:#fff}
+.wd-step.is-current.is-bad:not(.is-closed) {
+  background: var(--green);
+  color: var(--on-green, #fff);
+  font-weight: 600;
+}
+.wd-step.is-closed{background:#ba1a1a;color:#fff;font-weight:600}
 
 .wd-tabs{display:flex;gap:4px;overflow-x:auto;border-bottom:1px solid var(--line);margin-bottom:10px;scrollbar-width:none}
 .wd-tabs::-webkit-scrollbar{display:none}
@@ -2299,6 +2462,24 @@ html[data-theme="dark"] .sm-pill.info{background:#1f3350;color:#9db8ff}
 .wd-pending svg{flex:none}
 .wd-pending b{font-weight:600}
 .wd-pending.is-danger{background:var(--danger-bg);color:var(--danger)}
+
+/* Coordinator interest note (blue card under the pending action bar) */
+.wd-interest{display:flex;align-items:center;gap:12px;margin-top:12px;padding:9px 14px;border-radius:8px;background:#d3eef6;color:#0b3a4a;font-size:14px;line-height:1.4}
+.wd-interest svg{flex:none}
+.wd-interest-title{flex:none;max-width:120px;font-weight:600}
+.wd-interest-text{flex:1;min-width:0}
+.wd-interest-note{flex:none;max-width:260px;font-style:italic}
+html[data-theme="dark"] .wd-interest{background:#17394a;color:#bfe6f3}
+@media (max-width:900px){.wd-interest{flex-wrap:wrap}.wd-interest-note{max-width:none}}
+
+/* Expected departure reported (orange card under the pending action bar) */
+.wd-departure{display:flex;align-items:center;gap:12px;margin-top:12px;padding:9px 14px;border-radius:8px;background:#fde4bd;color:#5c3a05;font-size:14px;line-height:1.4}
+.wd-departure svg{flex:none}
+.wd-departure-text{flex:1;min-width:0}
+.wd-departure-text b{font-weight:600}
+.wd-departure .sm-btn{flex:none;height:30px;padding:0 14px;font-size:13.5px;font-weight:600;border-radius:8px;border:none}
+html[data-theme="dark"] .wd-departure{background:#4a3414;color:#ffd9a0}
+@media (max-width:900px){.wd-departure{flex-wrap:wrap}}
 
 /* Termination card (inside the status card) */
 .wd-term{margin-top:12px;padding:14px 18px 16px;border:1px solid var(--line);border-radius:10px;background: #f8f9f7;}

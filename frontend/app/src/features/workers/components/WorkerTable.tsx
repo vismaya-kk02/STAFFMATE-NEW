@@ -258,10 +258,14 @@ export default function WorkerTable({
                     <td>
                       <div className="wk-act">
                         {r.departure ? (
-                          <>
-                            <button type="button" className="sm-btn sm-btn-primary" onClick={() => onBeginTermination?.(w.id)}>Begin termination</button>
-                            <button type="button" className="wk-textbtn" onClick={() => onAcknowledge?.(w.id)}>Acknowledge</button>
-                          </>
+                          r.acknowledged ? (
+                            <Pill tone="muted">Acknowledged</Pill>
+                          ) : (
+                            <>
+                              <button type="button" className="sm-btn sm-btn-primary" onClick={() => onBeginTermination?.(w.id)}>Begin termination</button>
+                              <button type="button" className="wk-textbtn" onClick={() => onAcknowledge?.(w.id)}>Acknowledge</button>
+                            </>
+                          )
                         ) : (
                           <button type="button" className="sm-btn sm-btn-outline" onClick={() => onOpenWorker(w.id)}>Open</button>
                         )}
